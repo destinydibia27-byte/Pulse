@@ -1,5 +1,28 @@
 # Pulse — MVP scaffold
 
+## Live deployment (Arbitrum Sepolia, testnet only)
+
+- **Contract:** [`0x9E73A83F09434530Fe860D758EE923C711E05273`](https://sepolia.arbiscan.io/address/0x9E73A83F09434530Fe860D758EE923C711E05273)
+- Its **Transactions** tab shows the full loop that was run on a real chain: contract deployment,`createPermission`, automatic executions sent by the worker, and a pause and cancel.
+- Test USDC: `0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d` (Circle's Arbitrum Sepolia USDC)
+
+### What was demonstrated on-chain
+
+| Step | Result |
+|---|---|
+| Plain-English rule parsed to a fixed schema and reviewed | "Every Friday (UTC), if USDC > $1, send $1 to savings" |
+| Permission created on-chain | capped amount, locked recipient, expiry, weekday, balance condition |
+| Execution without a human click | the worker found the rule due and the contract paid it |
+| Repeat attempt the same day | refused by the contract: "Already executed for this UTC day" |
+| Pause, then cancel | on-chain status read 0 (active), then 1 (paused), then 2 (cancelled) |
+
+### Honest limitations
+
+- Pulse enforces permissions with its **own contract**, not a smart-account provider (ZeroDev, Safe). Composing with a provider is the v2 path.
+- The contract is **unaudited** and for testnet only. Do not use real funds.
+- The trigger-watcher is a **single process** (a single point of failure for liveness, not safety): if it is down, nothing runs, but the contract still refuses anything outside the rules.
+- Schedules are in **UTC**, because the chain has no source of a user's timezone.
+
 This is a working scaffold for the hackathon MVP described in `pulse-build-prompt.md`:
 intent → rule → safety → check → approval → automation → execution → revocation,
 targeting Arbitrum Sepolia / USDC.
@@ -15,7 +38,7 @@ setting three env vars — nothing else changes.
 | Intent schema + validation (`lib/schema.ts`) | Real. Rejects anything that doesn't fit — no partial trust. |
 | Policy engine (`lib/policyEngine.ts`) | Real logic. Recipient allowlist is hardcoded for `demo` user — wire to a real settings table before shipping. |
 | "Check rule" balance read (`lib/balance.ts`) | Real. The server reads the connected wallet's USDC balance over `ARBITRUM_SEPOLIA_RPC_URL` and compares it to the condition threshold and the send amount. Verified against a local chain with a real token and the real route (rich/poor/unmet/no-wallet/bad-address/RPC-down cases). If the wallet isn't connected or the RPC is unset/down it says "balance not checked" and explains why; it never guesses. Informational only: it cannot block approval or grant authority. |
-| Smart contract (`contracts/src/PulseAutomation.sol`) | 38 Foundry tests pass (incl. fuzz) and a local Anvil end-to-end run passes through the real backend code. Unaudited. **Not yet deployed to Arbitrum Sepolia** (needs your funded deployer key). |
+| Smart contract (`contracts/src/PulseAutomation.sol`) | 60 Foundry tests pass (incl. fuzz) and a local Anvil end-to-end run passes through the real backend code. Unaudited. **Not yet deployed to Arbitrum Sepolia** (needs your funded deployer key). |
 | `/api/parse` | Real endpoint. Uses Groq (OpenAI-compatible chat completions, `llama-3.3-70b-versatile` by default) if `GROQ_API_KEY` is set; otherwise a keyword-based mock parser so the UI is demoable offline. |
 | `/api/execute` | Real endpoint. Makes an actual on-chain `execute()` call if `ARBITRUM_SEPOLIA_RPC_URL` / `PULSE_CONTRACT_ADDRESS` / `EXECUTOR_PRIVATE_KEY` are set; otherwise runs in **MOCK MODE** (clearly labeled in the API response) so you can demo the loop's shape without a live deployment. |
 | Trigger worker (`backend/src/triggerWorker.ts`, `npm run worker`) | Real. Checks the schedule (read in UTC, to match the contract) and your balance condition, and sends at most once per day. Persists its intent before sending so a crash can't cause a double send. Retries only failures where nothing was sent (3/day, 5-min backoff). Verified end to end against a live local chain. **Still a single process and a single point of failure**; the production path is a keeper network (Chainlink Automation / Gelato). |
