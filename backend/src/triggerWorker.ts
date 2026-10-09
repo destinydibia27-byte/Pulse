@@ -227,15 +227,28 @@ async function preflight(): Promise<void> {
   }
 }
 
+export const DEFAULT_POLL_INTERVAL_MS = 60_000;
+export const MIN_POLL_INTERVAL_MS = 1_000;
+
+/**
+ * Poll interval from POLL_INTERVAL_MS. A missing, blank, non-numeric or tiny value falls back
+ * to the default. The blank case is real: .env.example ships `POLL_INTERVAL_MS=` and
+ * Number("") is 0, so `??` alone produced a 0ms loop that hammered the RPC.
+ */
+export function parsePollInterval(raw: string | undefined): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= MIN_POLL_INTERVAL_MS ? n : DEFAULT_POLL_INTERVAL_MS;
+}
+
 export async function startTriggerWorker(): Promise<void> {
   await preflight();
   const deps = realDeps();
-  const interval = Number(process.env.POLL_INTERVAL_MS ?? 60_000);
+  const interval = parsePollInterval(process.env.POLL_INTERVAL_MS);
   console.warn(
     "[triggerWorker] MVP placeholder: single process, single point of failure. " +
       "Run only ONE against this database."
   );
-  console.log(`[triggerWorker] polling every ${interval}ms; db=${process.env.PULSE_DB_PATH ?? "default"}`);
+  console.log(`[triggerWorker] polling every ${interval}ms; db=${process.env.PULSE_DB_PATH || "default"}`);
 
   // Sequential loop (not setInterval) so a slow poll can never overlap the next one.
   for (;;) {

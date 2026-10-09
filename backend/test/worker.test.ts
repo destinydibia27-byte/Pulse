@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { processAutomation, pollOnce, type WorkerDeps } from "../src/triggerWorker";
+import {
+  processAutomation,
+  pollOnce,
+  parsePollInterval,
+  DEFAULT_POLL_INTERVAL_MS,
+  type WorkerDeps,
+} from "../src/triggerWorker";
 import { ExecutionUncertainError } from "../src/chain";
 import { RETRY_BACKOFF_MS, MAX_ATTEMPTS_PER_DAY } from "../src/scheduler";
 import type { AutomationRecord } from "../src/db";
@@ -273,4 +279,23 @@ test("pollOnce: only active automations run, and one failure doesn't block the o
   assert.equal(h.calls.execute, 1, "c ran; a failed before sending; b is paused");
   assert.equal(h.records[2].lastExecution?.status, "success");
   assert.equal(h.records[1].lastExecution, undefined);
+});
+
+// ------------------------------------------------------------------ poll interval
+test("parsePollInterval: a blank value (as copied from .env.example) falls back to the default, never 0", () => {
+  assert.equal(parsePollInterval(""), DEFAULT_POLL_INTERVAL_MS);
+  assert.equal(parsePollInterval("   "), DEFAULT_POLL_INTERVAL_MS);
+  assert.equal(parsePollInterval(undefined), DEFAULT_POLL_INTERVAL_MS);
+});
+
+test("parsePollInterval: junk, zero, negative and too-small values fall back to the default", () => {
+  for (const bad of ["abc", "0", "-5", "999", "NaN", "Infinity"]) {
+    assert.equal(parsePollInterval(bad), DEFAULT_POLL_INTERVAL_MS, bad);
+  }
+});
+
+test("parsePollInterval: a sensible value is used as given", () => {
+  assert.equal(parsePollInterval("1000"), 1000);
+  assert.equal(parsePollInterval("5000"), 5000);
+  assert.equal(parsePollInterval("300000"), 300000);
 });

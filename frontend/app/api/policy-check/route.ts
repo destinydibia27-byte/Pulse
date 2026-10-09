@@ -9,6 +9,7 @@ import {
 import { readTokenBalance } from "../../../lib/balance";
 import { IntentSchema } from "../../../lib/schema";
 import { APPROVED_RECIPIENTS, USDC_ADDRESS } from "../../../lib/appConfig";
+import { DEMO_SAVINGS_FALLBACK } from "../../../lib/constants";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -38,6 +39,8 @@ export async function POST(req: NextRequest) {
       policy: {
         asset: policy.asset,
         recipient: policy.recipient,
+        // True when no DEMO_SAVINGS_ADDRESS is configured: funds would go to a public address anyone can spend from.
+        recipientIsPublicDefault: policy.recipient.toLowerCase() === DEMO_SAVINGS_FALLBACK.toLowerCase(),
         amount: policy.amount.toString(),
         maxPerExecution: policy.maxPerExecution.toString(),
         maxPerWindow: policy.maxPerWindow.toString(),

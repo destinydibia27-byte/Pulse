@@ -187,6 +187,17 @@ cp .env.example .env   # then fill it in as you go through the steps below
 10. **Only then let the worker run unattended**, and check back on it — see
     "Known limitations" above for what it won't tell you if it silently stops.
 
+## How the web app gets its settings
+
+`npm run dev`, `npm run build` and `npm run start` in `frontend/` go through
+`frontend/scripts/run-with-env.js`, which loads the repo-root `.env` into the environment
+before Next starts and prints which key settings are missing (names only). Do not call
+`next start` directly: with only a root `.env` file, the API routes then do not see it. The
+symptoms are "No server RPC configured" and, worse, the "savings" recipient silently falling back
+to the public demo address. The review screen now shows the recipient address and warns if it is
+that public address. The backend worker reads the same `.env` itself, but only when started from
+the `backend/` folder.
+
 ## Testing
 
 ```bash

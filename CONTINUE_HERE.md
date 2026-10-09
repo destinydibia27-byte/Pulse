@@ -66,6 +66,22 @@ nothing outside the contract and its tests needed updating. **If you deployed th
 previous contract anywhere, redeploy**: windows on existing permissions keep the old
 anchoring.
 
+## Found during the first real Sepolia run
+
+- **The web server did not see the root `.env`**, so "savings" fell back to the public demo
+  address (`0x90F7...E93b906`) and the balance check said "No server RPC configured". The second
+  automation paid that public address instead of the intended wallet (testnet USDC, harmless, but
+  it is exactly the failure the product exists to prevent). My earlier end-to-end scripts exported
+  the variables, so they never exercised the real startup path. Fixed with
+  `frontend/scripts/run-with-env.js`, verified by reproducing it with only a root `.env`.
+  The review screen now shows the recipient address and warns on the public default.
+- **Worker polled with a 0 ms delay**: a blank `POLL_INTERVAL_MS=` copied from `.env.example`
+  became 0. Fixed (`parsePollInterval`, 90 backend tests).
+- **Dashboard can disagree with the chain.** Cancel is two steps (on-chain, then a signed record
+  in the app). If the second is skipped, the chain says Cancelled while the card says paused, and
+  the UI cannot repair it (the contract reverts a second cancel). The app never reads the chain's
+  status. Not fixed.
+
 ## Open items (not fixed, decide before deploying)
 
 1. **Still unaudited, and never run against a live chain.** Expect to debug the first

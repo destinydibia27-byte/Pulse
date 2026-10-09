@@ -184,10 +184,21 @@ export default function Review() {
           <div>Trigger: every {intent.trigger.day} (UTC)</div>
           <div>Condition: {intent.condition.asset} {intent.condition.operator} ${intent.condition.balance}</div>
           <div>Action: send {intent.action.amount} {intent.action.asset}</div>
-          <div>To: {intent.recipientId}</div>
+          <div>
+            To: {intent.recipientId}
+            {checkResult?.policy?.recipient && (
+              <span className="font-mono"> ({String(checkResult.policy.recipient).slice(0, 6)}…{String(checkResult.policy.recipient).slice(-4)})</span>
+            )}
+          </div>
           <div>Max/week: ${intent.maxPerWindow}</div>
           <div>Expires: {new Date(intent.expiresAt).toLocaleDateString()}</div>
         </div>
+        {checkResult?.policy?.recipientIsPublicDefault && (
+          <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            Warning: this sends to the built-in public demo address, which anyone can spend from. Set
+            DEMO_SAVINGS_ADDRESS to your own wallet and restart the app before approving.
+          </p>
+        )}
         <p className="text-xs text-neutral-500">
           Days are read in UTC, because the contract has no way to know your timezone. In some
           timezones that means a few hours of your local {intent.trigger.day} fall on the neighboring UTC day.
