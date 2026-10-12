@@ -28,7 +28,7 @@ USDC=$(forge create test/PulseAutomation.t.sol:MockUSDC --rpc-url $RPC --private
 echo "Pulse: $PULSE"; echo "USDC:  $USDC"
 
 cast send $USDC "mint(address,uint256)" $USER_ADDR 1000000000 --rpc-url $RPC --private-key $DEPLOYER_KEY >/dev/null
-cast send $USDC "approve(address,uint256)" $PULSE 10000000 --rpc-url $RPC --private-key $USER_KEY >/dev/null
+cast send $USDC "approve(address,uint256)" $PULSE 20000000 --rpc-url $RPC --private-key $USER_KEY >/dev/null
 EXPIRES=$(( $(date +%s) + 31536000 ))
 # The contract enforces the weekday in UTC (0 = Sunday .. 6 = Saturday) and a balance condition.
 # Anvil's block time follows the wall clock, so "today" here is the contract's "today".
@@ -41,12 +41,28 @@ mkperm $TODAY_NUM 0 5000000000    # id 1: today,     balance > 5000 USDC (NOT me
 mkperm $OTHER_NUM 0 100000000     # id 2: tomorrow,  balance >  100 USDC (wrong weekday)
 mkperm $TODAY_NUM 0 100000000     # id 3: today,     for the per-execution-cap check
 
-export ARBITRUM_SEPOLIA_RPC_URL=$RPC PULSE_CONTRACT_ADDRESS=$PULSE EXECUTOR_PRIVATE_KEY=$EXECUTOR_KEY
+# ---- price conditions: mock Chainlink-style feeds (ETH/USD, 8 decimals) -----------------------
+deploy_feed(){ forge create test/PulsePrice.t.sol:MockAggregator --rpc-url $RPC --private-key $DEPLOYER_KEY $EXTRA \
+  --broadcast --constructor-args 8 2>&1 | grep "Deployed to" | awk '{print $NF}'; }
+NOW=$(date +%s)
+FEED_OK=$(deploy_feed);    cast send $FEED_OK    "set(int256,uint256)" 200000000000 $NOW           --rpc-url $RPC --private-key $DEPLOYER_KEY >/dev/null  # $2,000, fresh
+FEED_STALE=$(deploy_feed); cast send $FEED_STALE "set(int256,uint256)" 200000000000 $(( NOW - 7200 )) --rpc-url $RPC --private-key $DEPLOYER_KEY >/dev/null # $2,000, 2h old
+FEED_DOWN=$(deploy_feed);  cast send $FEED_DOWN  "set(int256,uint256)" 200000000000 $NOW           --rpc-url $RPC --private-key $DEPLOYER_KEY >/dev/null
+mkprice(){ # feed op thresholdUsd8dec maxAgeSeconds   (cap 1 USDC; today; balance condition trivially true)
+  cast send $PULSE "createPermissionWithPrice(address,address,uint256,uint256,uint256,uint256,uint8,uint8,uint256,(address,uint8,uint256,uint256))" \
+    $USDC $RECIPIENT 1000000 1000000 604800 $EXPIRES $TODAY_NUM 0 0 "($1,$2,$3,$4)" --rpc-url $RPC --private-key $USER_KEY >/dev/null; }
+mkprice $FEED_OK    2 250000000000 3600   # id 4: ETH <  $2,500 (it is $2,000): met
+mkprice $FEED_OK    0 250000000000 3600   # id 5: ETH >  $2,500: NOT met
+mkprice $FEED_STALE 2 250000000000 3600   # id 6: ETH <  $2,500, but the price is 2h old (max 1h): stale
+mkprice $FEED_DOWN  2 250000000000 3600   # id 7: created while the feed works...
+cast send $FEED_DOWN "setRevert(bool)" true --rpc-url $RPC --private-key $DEPLOYER_KEY >/dev/null   # ...then the feed goes down
+
+export ARBITRUM_SEPOLIA_RPC_URL=$RPC PULSE_CONTRACT_ADDRESS=$PULSE EXECUTOR_PRIVATE_KEY=$EXECUTOR_KEY FEED_OK=$FEED_OK
 ( cd ../backend && npx tsx scripts/e2e-local.ts )
 
 BAL=$(cast call $USDC "balanceOf(address)(uint256)" $RECIPIENT --rpc-url $RPC | awk '{print $1}')
-echo "recipient balance: $BAL (expected 10000000)"
-[ "$BAL" = "10000000" ] && echo "RECIPIENT BALANCE OK"
+echo "recipient balance: $BAL (expected 11000000: 10 from #0 and 1 from the price rule #4)"
+[ "$BAL" = "11000000" ] && echo "RECIPIENT BALANCE OK"
 
 # Real revocation: user cancels on-chain, executor can no longer move anything.
 cast send $PULSE "cancel(uint256)" 0 --rpc-url $RPC --private-key $USER_KEY >/dev/null

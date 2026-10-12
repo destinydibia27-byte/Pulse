@@ -21,12 +21,13 @@ to Sepolia, and nothing here has touched a live chain.
 
 | Check | Result |
 |---|---|
-| `forge test` | 60 pass (also green with the optimizer off, 5,000 fuzz runs) |
-| Mutation test of the weekday, once-per-day, condition and window checks | 42/42 mutants caught (33 + 9 for the window) |
-| `backend` `npm test` | 87 pass (includes ABI-vs-Solidity drift guards) |
+| `forge test` | 91 pass (60 + 31 price tests; green with the optimizer on and off, up to 5,000 fuzz runs) |
+| Mutation test of the weekday, once-per-day, condition and window checks | 42/42 caught on the previous contract; after the v2 refactor 12 of them re-run and caught |
+| Mutation test of the new price logic | 29/29 mutants caught |
+| `backend` `npm test` | 96 pass (includes ABI-vs-Solidity drift guards for the new function, struct and event) |
 | `backend` / `frontend` `tsc --noEmit`, `next build` | clean |
 | `scripts/sync-shared.sh --check` | in sync |
-| `contracts/script/local-e2e.sh` | all checks pass |
+| `contracts/script/local-e2e.sh` | all checks pass, including price met / unmet / stale / feed down on a real chain with mock feeds |
 | `contracts/script/local-full.sh` | 29 passed, 0 failed |
 
 ## Decisions worth knowing about
@@ -81,6 +82,24 @@ anchoring.
   in the app). If the second is skipped, the chain says Cancelled while the card says paused, and
   the UI cannot repair it (the contract reverts a second cancel). The app never reads the chain's
   status. Not fixed.
+
+## Contract v2: optional on-chain price condition (built, not deployed)
+
+Done and verified: `createPermissionWithPrice`, the feed checks, the refusals, 31 new contract
+tests, 29 mutants, the extended ABI (19-field `getPermission`, the new function and event), and
+the registration check that refuses an on-chain price condition the app's record does not
+describe. Details are in `contracts/README.md`. The old 9-argument `createPermission` is
+unchanged, so the current app keeps working against v2.
+
+**Not done:** the app cannot create or show a price rule yet. Still to build: the intent schema
+and parser (an allowlisted asset plus operator and price), the policy engine (feed allowlist from
+config, USD-to-feed-units conversion), the worker's off-chain pre-check (so a price refusal does
+not make it give up for the day), the review screen and the dashboard.
+
+**Not verified:** no real Chainlink feed has been read. Everything ran against mock feeds. Before
+trusting a real feed, check its `description()`, `decimals()` and heartbeat on Arbitrum Sepolia.
+Deploying v2 means a new contract address (update both address lines in `.env`); automations
+created on the old contract stay on the old contract.
 
 ## Open items (not fixed, decide before deploying)
 

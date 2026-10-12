@@ -62,6 +62,38 @@ async function main() {
     assert.equal(p[13], NEVER, `#${id}: a rejection must not burn the day`);
   }
 
+  // ---- price conditions, enforced on-chain against a mock Chainlink-style feed ----------------
+  const priceOk = await attemptExecution(4n, 1_000_000n);
+  console.log("#4 price met ->", priceOk.outcome);
+  assert.equal(priceOk.outcome.status, "success");
+
+  const priceUnmet = await attemptExecution(5n, 1_000_000n);
+  console.log("#5 price unmet ->", priceUnmet.outcome);
+  assert.equal(priceUnmet.outcome.status, "rejected");
+  assert.equal((priceUnmet.outcome as any).reason, "Price condition not met");
+
+  const priceStale = await attemptExecution(6n, 1_000_000n);
+  console.log("#6 stale price ->", priceStale.outcome);
+  assert.equal(priceStale.outcome.status, "rejected");
+  assert.equal((priceStale.outcome as any).reason, "Price feed stale");
+
+  const priceDown = await attemptExecution(7n, 1_000_000n);
+  console.log("#7 feed down ->", priceDown.outcome);
+  assert.equal(priceDown.outcome.status, "rejected");
+  assert.equal((priceDown.outcome as any).reason, "Price feed unavailable");
+
+  const p4: any = await readPermission(4n);
+  assert.equal(String(p4[14]).toLowerCase(), String(process.env.FEED_OK).toLowerCase(), "the feed is stored on-chain");
+  assert.equal(p4[15], 2, "operator stored (LT)");
+  assert.equal(p4[16], 8, "feed decimals recorded");
+  assert.equal(p4[17], 250_000_000_000n, "threshold stored in the feed's units");
+  assert.equal(p4[8], 1_000_000n, "#4 spent its 1 USDC");
+  for (const id of [5n, 6n, 7n]) {
+    const p: any = await readPermission(id);
+    assert.equal(p[8], 0n, `#${id} spent nothing`);
+    assert.equal(p[13], NEVER, `#${id}: a price refusal must not burn the day`);
+  }
+
   console.log("E2E-PART-1 OK");
 }
 

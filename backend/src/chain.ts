@@ -191,12 +191,21 @@ export interface ExpectedPermission {
   weekday: number; // 0 = Sunday .. 6 = Saturday, UTC
   conditionOp: number; // on-chain Op enum index
   conditionThreshold: bigint;
+  /** Omit for a permission with no price condition: the chain must then have none either. */
+  price?: {
+    feed: Address;
+    op: number;
+    decimals: number;
+    threshold: bigint; // in the feed's own decimals
+    maxAge: bigint; // seconds
+  };
 }
 
 /** The positional tuple getPermission returns (see the field-order note in abi.ts). */
 export type OnChainPermission = readonly [
   Address, Address, Address, bigint, bigint, bigint, bigint, bigint, bigint,
   number, number, number, bigint, bigint,
+  Address, number, number, bigint, bigint,
 ];
 
 /**
@@ -227,6 +236,21 @@ export function checkPermissionMatches(
   if (weekday !== expected.weekday) return { ok: false, reason: "On-chain weekday does not match." };
   if (conditionOp !== expected.conditionOp || conditionThreshold !== expected.conditionThreshold)
     return { ok: false, reason: "On-chain balance condition does not match." };
+
+  // The price condition (optional). The record must describe exactly what the chain enforces:
+  // an unknown on-chain price condition would make the app promise a run the chain will refuse.
+  const [priceFeed, priceOp, priceDecimals, priceThreshold, maxPriceAge] = [p[14], p[15], p[16], p[17], p[18]];
+  const noFeed = eq(priceFeed, "0x0000000000000000000000000000000000000000");
+  if (!expected.price) {
+    if (!noFeed) return { ok: false, reason: "On-chain permission has a price condition this record does not describe." };
+  } else {
+    const x = expected.price;
+    if (
+      noFeed || !eq(priceFeed, x.feed) || priceOp !== x.op || priceDecimals !== x.decimals ||
+      priceThreshold !== x.threshold || maxPriceAge !== x.maxAge
+    )
+      return { ok: false, reason: "On-chain price condition does not match." };
+  }
   return { ok: true };
 }
 

@@ -56,6 +56,39 @@ returns, so a rejected call is still a mined, successful transaction. Callers mu
 read the events (see `readOutcome` in `chain.ts`). Only true failures (e.g. the
 user's allowance or balance is too low) revert.
 
+## Optional price condition (Chainlink-style feed)
+
+`createPermissionWithPrice(...)` is `createPermission(...)` plus a market condition, e.g.
+"only while ETH < $2,500". The plain `createPermission` is unchanged and creates a permission
+with no price condition.
+
+- **Enforced on-chain.** `execute()` reads the feed's `latestRoundData()` itself, so a
+  compromised worker cannot send when the condition is false. Check order: status, weekday,
+  once-per-day, balance condition, **price**, then amount and caps.
+- **Three refusals, all without using up the day** (so the same permission can send later if
+  the price crosses): `Price condition not met`, `Price feed stale` (answer older than the
+  permission's `maxAge`; exactly `maxAge` old is still fresh), and `Price feed unavailable`
+  (the feed reverts, has no code, reports a non-positive answer, or has no update time).
+  A refusal is an event, not a revert.
+- **Creation refuses anything that is not a working feed:** zero address, no code, a feed whose
+  `decimals()` fails or exceeds 18, one that cannot return a positive answer right now, a zero
+  threshold, and a `maxAge` of 0 or above 7 days. Freshness is deliberately *not* required at
+  creation, so a quiet testnet feed does not stop you creating a rule.
+- **Units.** The threshold is in the feed's own decimals (8 for the common USD feeds); the
+  contract records the feed's `decimals()` so the app can check the scale it sent.
+- **The feed is fixed at creation.** There is no setter. Anyone can create a permission against
+  any feed, but the only person at risk is the creator (their own funds, their own recipient and
+  caps), which `test_trustBoundary_attackerFeedIsOnlyTheCreatorsOwnRisk` documents. The *app*
+  allowlists feeds off-chain, so the AI can never choose one.
+- **Known limits.** No sequencer-uptime check (after an L2 sequencer outage a feed can briefly
+  look fresh while lagging), no TWAP or multi-feed median, and one feed per permission. Feed
+  addresses are **not** hardcoded: take them from Chainlink's own documentation and verify
+  `description()` and `decimals()` on-chain before use. A feed returning *malformed* data can
+  still revert the whole call (a decode failure cannot be caught); no funds move and the worker
+  retries.
+- `permissions` is a private mapping now; `getPermission(id)` is the one accessor (the extra
+  public getter returned 19 values and broke the optimizer-off build).
+
 ## Setup (Foundry)
 
 ```bash
@@ -73,12 +106,15 @@ forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 foundry-rs/forge-std --
 forge test -vv
 ```
 
-60 tests: creation validation, every rejection path, weekday enforcement (all
+91 tests (60 in `PulseAutomation.t.sol`, 31 in `PulsePrice.t.sol`): creation validation, every rejection path, weekday enforcement (all
 seven days, day boundaries, fuzzed), once-per-day, all five condition operators
 (checked against the off-chain implementation), window reset, UTC-day anchoring and
 boundary behavior, pause/resume/cancel and access control, executor rotation, plus fuzz
 tests asserting the caps can never be exceeded and non-executors can never move
-funds.
+funds. The 31 price tests cover feed validation, all five operators at their boundaries,
+staleness at exactly `maxAge`, every unavailable-feed case (including a feed whose code vanishes
+via `vm.etch`), check ordering, caps, and a fuzz comparison against the off-chain operator
+semantics. The suite also builds and passes with the optimizer off.
 
 **Writing tests that warp time: never read `block.timestamp` after `vm.warp`.**
 With the optimizer on, solc treats `block.timestamp` as constant within a function

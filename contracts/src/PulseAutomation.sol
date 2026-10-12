@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./interfaces/AggregatorV3Interface.sol";
 
 /// @title PulseAutomation
 /// @notice Enforces capped, expiring, recipient-restricted, SCHEDULED and
@@ -55,7 +56,24 @@ contract PulseAutomation is Ownable, ReentrancyGuard {
         Op conditionOp;          // how the owner's balance is compared to conditionThreshold
         uint256 conditionThreshold; // in `asset`'s base units
         uint256 lastExecutionDay;   // UTC day index (timestamp/1 days) of the last SUCCESSFUL send; sentinel = NEVER_EXECUTED
+        // Optional market condition. priceFeed == address(0) means "no price condition".
+        address priceFeed;          // Chainlink-style aggregator the price is read from
+        Op priceOp;                 // how the feed's latest answer is compared to priceThreshold
+        uint8 priceDecimals;        // the feed's decimals(), recorded at creation
+        uint256 priceThreshold;     // in the feed's own units (e.g. USD with 8 decimals)
+        uint256 maxPriceAge;        // seconds; an answer older than this is treated as stale
     }
+
+    /// @notice Arguments for the optional price condition.
+    struct PriceCondition {
+        address feed;
+        Op op;
+        uint256 threshold; // in the feed's own decimals
+        uint256 maxAge;    // seconds
+    }
+
+    /// @notice Upper bound on maxAge, so a permission cannot accept an effectively eternal-old price.
+    uint256 public constant MAX_PRICE_AGE_LIMIT = 7 days;
 
     uint256 private constant NEVER_EXECUTED = type(uint256).max;
 
@@ -67,7 +85,10 @@ contract PulseAutomation is Ownable, ReentrancyGuard {
     address public executor;
 
     uint256 public nextPermissionId;
-    mapping(uint256 => Permission) public permissions;
+    /// @dev Private on purpose: `getPermission(id)` is the one accessor. A public mapping of a
+    ///      struct this wide also generates a 19-value getter that overflows the compiler's stack
+    ///      when the optimizer is off.
+    mapping(uint256 => Permission) private permissions;
 
     event PermissionCreated(
         uint256 indexed id,
@@ -81,6 +102,14 @@ contract PulseAutomation is Ownable, ReentrancyGuard {
         uint8 weekday,
         Op conditionOp,
         uint256 conditionThreshold
+    );
+    event PriceConditionSet(
+        uint256 indexed id,
+        address feed,
+        Op op,
+        uint8 decimals,
+        uint256 threshold,
+        uint256 maxAge
     );
     event PermissionPaused(uint256 indexed id);
     event PermissionResumed(uint256 indexed id);
@@ -140,12 +169,76 @@ contract PulseAutomation is Ownable, ReentrancyGuard {
         Op conditionOp,
         uint256 conditionThreshold
     ) external returns (uint256 id) {
+        return _create(
+            asset, recipient, maxPerExecution, maxPerWindow, windowSeconds, expiresAt,
+            weekday, conditionOp, conditionThreshold,
+            PriceCondition({feed: address(0), op: Op.GT, threshold: 0, maxAge: 0})
+        );
+    }
+
+    /// @notice Same as createPermission, plus a market condition: the permission only
+    ///         executes while the feed's latest price satisfies `price.op price.threshold`
+    ///         and that price is no older than `price.maxAge`.
+    /// @dev The feed is read live inside execute(), so the condition is enforced on-chain.
+    ///      A stale, failing or non-positive answer is a rejection (never a send).
+    function createPermissionWithPrice(
+        address asset,
+        address recipient,
+        uint256 maxPerExecution,
+        uint256 maxPerWindow,
+        uint256 windowSeconds,
+        uint256 expiresAt,
+        uint8 weekday,
+        Op conditionOp,
+        uint256 conditionThreshold,
+        PriceCondition calldata price
+    ) external returns (uint256 id) {
+        require(price.feed != address(0), "Pulse: bad feed");
+        require(price.threshold > 0, "Pulse: bad price threshold");
+        require(price.maxAge > 0 && price.maxAge <= MAX_PRICE_AGE_LIMIT, "Pulse: bad price age");
+        return _create(
+            asset, recipient, maxPerExecution, maxPerWindow, windowSeconds, expiresAt,
+            weekday, conditionOp, conditionThreshold, price
+        );
+    }
+
+    function _create(
+        address asset,
+        address recipient,
+        uint256 maxPerExecution,
+        uint256 maxPerWindow,
+        uint256 windowSeconds,
+        uint256 expiresAt,
+        uint8 weekday,
+        Op conditionOp,
+        uint256 conditionThreshold,
+        PriceCondition memory price
+    ) private returns (uint256 id) {
         require(asset != address(0), "Pulse: bad asset");
         require(recipient != address(0), "Pulse: bad recipient");
         require(maxPerExecution > 0 && maxPerExecution <= maxPerWindow, "Pulse: bad caps");
         require(windowSeconds > 0, "Pulse: bad window");
         require(expiresAt > block.timestamp, "Pulse: already expired");
         require(weekday <= 6, "Pulse: bad weekday");
+
+        uint8 priceDecimals;
+        if (price.feed != address(0)) {
+            // A call to an address with no code reverts BEFORE a try/catch can see it (and
+            // without a message), so check for code explicitly to give a clear refusal.
+            require(price.feed.code.length > 0, "Pulse: bad feed");
+            // Refuse anything that is not a working price feed (an EOA, an unrelated
+            // contract, a feed that reverts or reports a non-positive answer), so a typo'd
+            // address fails here and not silently at 3 a.m. on a Friday. Freshness is NOT
+            // required at creation; a quiet testnet feed should not block creating a rule.
+            try AggregatorV3Interface(price.feed).decimals() returns (uint8 d) {
+                require(d <= 18, "Pulse: bad feed");
+                priceDecimals = d;
+            } catch {
+                revert("Pulse: bad feed");
+            }
+            (bool ok, , ) = _readFeed(price.feed);
+            require(ok, "Pulse: bad feed");
+        }
 
         id = nextPermissionId++;
         permissions[id] = Permission({
@@ -162,7 +255,12 @@ contract PulseAutomation is Ownable, ReentrancyGuard {
             weekday: weekday,
             conditionOp: conditionOp,
             conditionThreshold: conditionThreshold,
-            lastExecutionDay: NEVER_EXECUTED
+            lastExecutionDay: NEVER_EXECUTED,
+            priceFeed: price.feed,
+            priceOp: price.op,
+            priceDecimals: priceDecimals,
+            priceThreshold: price.threshold,
+            maxPriceAge: price.maxAge
         });
 
         emit PermissionCreated(
@@ -170,6 +268,25 @@ contract PulseAutomation is Ownable, ReentrancyGuard {
             maxPerExecution, maxPerWindow, windowSeconds, expiresAt,
             weekday, conditionOp, conditionThreshold
         );
+        if (price.feed != address(0)) {
+            emit PriceConditionSet(id, price.feed, price.op, priceDecimals, price.threshold, price.maxAge);
+        }
+    }
+
+    /// @dev Latest feed answer. ok == false when the feed has no code, the call reverts, the
+    ///      answer is not positive, or the feed reports no update time. A feed that returns
+    ///      malformed data can still revert the whole call (try/catch cannot intercept a decode
+    ///      failure); that moves no funds and is retried by the worker.
+    function _readFeed(address feed) private view returns (bool ok, uint256 price, uint256 updatedAt) {
+        if (feed.code.length == 0) return (false, 0, 0);
+        try AggregatorV3Interface(feed).latestRoundData() returns (
+            uint80, int256 answer, uint256, uint256 updated, uint80
+        ) {
+            if (answer <= 0 || updated == 0) return (false, 0, 0);
+            return (true, uint256(answer), updated);
+        } catch {
+            return (false, 0, 0);
+        }
     }
 
     /// @notice Called by the executor/worker when it believes a permission is
@@ -211,6 +328,22 @@ contract PulseAutomation is Ownable, ReentrancyGuard {
         if (!_compare(balance, p.conditionOp, p.conditionThreshold)) {
             emit ExecutionRejected(id, "Balance condition not met");
             return;
+        }
+
+        if (p.priceFeed != address(0)) {
+            (bool feedOk, uint256 price, uint256 updatedAt) = _readFeed(p.priceFeed);
+            if (!feedOk) {
+                emit ExecutionRejected(id, "Price feed unavailable");
+                return;
+            }
+            if (updatedAt + p.maxPriceAge < block.timestamp) {
+                emit ExecutionRejected(id, "Price feed stale");
+                return;
+            }
+            if (!_compare(price, p.priceOp, p.priceThreshold)) {
+                emit ExecutionRejected(id, "Price condition not met");
+                return;
+            }
         }
 
         if (amount == 0) {

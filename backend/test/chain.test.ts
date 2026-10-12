@@ -26,6 +26,7 @@ const onchain = (over: Record<number, unknown> = {}): OnChainPermission => {
   const base: unknown[] = [
     OWNER, TOKEN, OTHER, 10n * USDC, 10n * USDC, 604800n, EXPIRES,
     0n, 0n, /*status*/ 0, /*weekday*/ 5, /*op*/ 0, 100n * USDC, /*lastExecutionDay*/ 2n ** 256n - 1n,
+    /*priceFeed*/ ZERO, /*priceOp*/ 0, /*priceDecimals*/ 0, /*priceThreshold*/ 0n, /*maxPriceAge*/ 0n,
   ];
   for (const [i, v] of Object.entries(over)) base[Number(i)] = v;
   return base as unknown as OnChainPermission;
@@ -78,6 +79,50 @@ test("checkPermissionMatches: a different on-chain operator or threshold is refu
     checkPermissionMatches(onchain({ 12: 100n * USDC + 1n }), expected()),
     { ok: false, reason: "On-chain balance condition does not match." }
   );
+});
+
+// ------------------------------------------------------------------- price condition
+const FEED = "0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612" as const; // arbitrary address for the fixture
+const OTHER_FEED = "0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165" as const;
+const priceExpected = (over: Partial<NonNullable<ExpectedPermission["price"]>> = {}) => ({
+  feed: FEED, op: 2, decimals: 8, threshold: 2_500n * 10n ** 8n, maxAge: 3600n, ...over,
+});
+const priceOnchain = (over: Record<number, unknown> = {}) =>
+  onchain({ 14: FEED, 15: 2, 16: 8, 17: 2_500n * 10n ** 8n, 18: 3600n, ...over });
+
+test("checkPermissionMatches: a price condition that matches exactly passes", () => {
+  assert.deepEqual(checkPermissionMatches(priceOnchain(), expected({ price: priceExpected() })), { ok: true });
+});
+
+test("checkPermissionMatches: an on-chain price condition the record does not describe is refused", () => {
+  assert.deepEqual(checkPermissionMatches(priceOnchain(), expected()), {
+    ok: false,
+    reason: "On-chain permission has a price condition this record does not describe.",
+  });
+});
+
+test("checkPermissionMatches: a record that expects a price condition the chain lacks is refused", () => {
+  assert.deepEqual(checkPermissionMatches(onchain(), expected({ price: priceExpected() })), {
+    ok: false,
+    reason: "On-chain price condition does not match.",
+  });
+});
+
+test("checkPermissionMatches: every field of the price condition is compared", () => {
+  const cases: [Record<number, unknown>, string][] = [
+    [{ 14: OTHER_FEED }, "feed"],
+    [{ 15: 3 }, "operator"],
+    [{ 16: 18 }, "decimals"],
+    [{ 17: 2_500n * 10n ** 8n + 1n }, "threshold (off by one base unit)"],
+    [{ 18: 3601n }, "max age"],
+  ];
+  for (const [chain, what] of cases) {
+    assert.deepEqual(
+      checkPermissionMatches(priceOnchain(chain), expected({ price: priceExpected() })),
+      { ok: false, reason: "On-chain price condition does not match." },
+      what
+    );
+  }
 });
 
 test("checkPermissionMatches: earlier checks still win over schedule checks (stable reasons)", () => {
@@ -137,4 +182,32 @@ test("ONCHAIN_OP indexes match the Solidity Op enum declaration order", { skip: 
     assert.equal(ONCHAIN_OP[bySymbol[name] as keyof typeof ONCHAIN_OP], index, `Op.${name}`);
   });
   assert.equal(solOps.length, Object.keys(ONCHAIN_OP).length);
+});
+
+test("abi: createPermissionWithPrice inputs match the Solidity function and the PriceCondition struct", { skip: !haveSol }, () => {
+  const m = sol.match(/function createPermissionWithPrice\(([\s\S]*?)\)\s*external/);
+  assert.ok(m, "createPermissionWithPrice not found in the contract");
+  const solParams = m[1].split(",").map((p) => p.trim().split(/\s+/));
+  const item = PULSE_ABI.find((x) => x.type === "function" && x.name === "createPermissionWithPrice") as any;
+  assert.deepEqual(item.inputs.map((i: any) => i.name), solParams.map((p) => p[p.length - 1]));
+
+  const sm = sol.match(/struct PriceCondition \{([\s\S]*?)\}/);
+  assert.ok(sm, "PriceCondition struct not found");
+  const fields = [...sm[1].matchAll(/^\s*(\w+)\s+(\w+);/gm)].map((x) => ({ type: x[1], name: x[2] }));
+  const last = item.inputs[item.inputs.length - 1];
+  assert.equal(last.type, "tuple", "the price argument is a tuple on the wire");
+  assert.deepEqual(last.components.map((c: any) => c.name), fields.map((f) => f.name));
+  assert.deepEqual(last.components.map((c: any) => c.type), fields.map((f) => (f.type === "Op" ? "uint8" : f.type)));
+  // every other parameter is the same as the plain createPermission's
+  const plain = PULSE_ABI.find((x) => x.type === "function" && x.name === "createPermission") as any;
+  assert.deepEqual(item.inputs.slice(0, -1), plain.inputs);
+});
+
+test("abi: PriceConditionSet event matches the Solidity event", { skip: !haveSol }, () => {
+  const m = sol.match(/event PriceConditionSet\(([\s\S]*?)\);/);
+  assert.ok(m, "PriceConditionSet event not found");
+  const solParams = m[1].split(",").map((p) => p.trim().split(/\s+/));
+  const item = PULSE_ABI.find((x) => x.type === "event" && x.name === "PriceConditionSet") as any;
+  assert.deepEqual(item.inputs.map((i: any) => i.name), solParams.map((p) => p[p.length - 1]));
+  assert.deepEqual(item.inputs.map((i: any) => i.type), solParams.map((p) => (p[0] === "Op" ? "uint8" : p[0])));
 });
