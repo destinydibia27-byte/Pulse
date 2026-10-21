@@ -74,5 +74,7 @@ export async function POST(req: NextRequest) {
   if (!result.ok) {
     return NextResponse.json(result, { status: 422 });
   }
-  return NextResponse.json(result);
+  // Tell the client whether an AI model or the crude offline fallback read the text, so the
+  // review screen can warn the user to check every field when it was the fallback.
+  return NextResponse.json({ ...result, parser: process.env.GROQ_API_KEY ? "llm" : "offline" });
 }

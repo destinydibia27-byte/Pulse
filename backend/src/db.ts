@@ -16,6 +16,18 @@ import type { Operator, RunState, Weekday } from "./scheduler";
  * worker + a demo UI; use SQLite/Postgres before anything real.
  */
 
+/** One recorded result of an attempt to run an automation. */
+export interface ExecutionEntry {
+  status: "submitted" | "success" | "rejected" | "error";
+  txHash?: string;
+  reason?: string;
+  error?: string;
+  at: string;
+}
+
+/** Newest results kept per automation. The JSON store is not an archive; the chain is. */
+export const HISTORY_LIMIT = 50;
+
 export interface AutomationRecord {
   id: string;
   onchainId: string;
@@ -32,13 +44,9 @@ export interface AutomationRecord {
   status: "active" | "paused" | "cancelled" | "expired";
   createdAt: string;
   run?: RunState;
-  lastExecution?: {
-    status: "submitted" | "success" | "rejected" | "error";
-    txHash?: string;
-    reason?: string;
-    error?: string;
-    at: string;
-  };
+  lastExecution?: ExecutionEntry;
+  /** Oldest first, capped at HISTORY_LIMIT. Absent on records that predate it. */
+  history?: ExecutionEntry[];
 }
 
 function dbPath(): string {
@@ -98,12 +106,17 @@ export const updateAutomation = (id: string, fn: (record: AutomationRecord) => v
     return record;
   });
 
-export const recordExecutionResult = (
-  id: string,
-  result: Omit<NonNullable<AutomationRecord["lastExecution"]>, "at">
-) =>
+export const recordExecutionResult = (id: string, result: Omit<ExecutionEntry, "at">) =>
   updateAutomation(id, (r) => {
-    r.lastExecution = { ...result, at: new Date().toISOString() };
+    const entry: ExecutionEntry = { ...result, at: new Date().toISOString() };
+    r.lastExecution = entry;
+    const history = r.history ?? [];
+    const last = history[history.length - 1];
+    // A transaction is first recorded as "submitted" and then finalized as success, rejected or
+    // error. Replace that entry instead of listing the same transaction twice.
+    if (last && entry.txHash && last.txHash === entry.txHash) history[history.length - 1] = entry;
+    else history.push(entry);
+    r.history = history.slice(-HISTORY_LIMIT);
   }).then(() => undefined);
 
 export const setStatus = (id: string, status: AutomationRecord["status"]) =>
