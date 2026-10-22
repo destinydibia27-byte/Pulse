@@ -122,16 +122,22 @@ Real data only, and where the old UI could mislead, it now tells the truth:
   offline fallback parser, which cannot tell "above" from "below".
 - Wrong network now offers a switch button instead of failing later.
 
-Not changed, on purpose: no ZeroDev integration exists in this code, so the UI never claims one. "Edit"
-is not offered, because the contract has no edit; the UI says to cancel and recreate. Internal names
-(`PulseAutomation`, env var names, the `pulse.pendingIntent` storage key, package names) still say Pulse.
-**One is user-visible:** the text wallets show when asking for a signature starts with "Pulse:" (in
-`lib/auth.ts`). Renaming it must change the signer, the verifier, their tests and `local-full.sh`
-together, so it is a separate change.
+Added after the first browser run: **Renew approval** on the detail page (the same amount the review step asks
+for, your weekly cap), **Create a changed copy** (the contract cannot edit a permission, so the rule is carried back
+to the form as plain text to adjust), wallet signature prompts that now start with "Volo:" (the signer and verifier
+share `lib/auth.ts`; `local-full.sh` was updated to match), and wagmi `ssr: true`, which removed React hydration
+errors (#418 / #423) that appeared whenever a saved wallet connection was restored.
 
-Not tested: no real browser was available, so layout and responsiveness are checked by build, rendered
-HTML and class review only, not by eye. Wallet popups, live contract reads and the revoke-approval
-transaction have not been exercised against a real wallet or chain from this build.
+Not changed, on purpose: no ZeroDev integration exists in this code, so the UI never claims one. Internal names
+(`PulseAutomation`, env var names, the `pulse.pendingIntent` storage key, package names) still say Pulse; none of
+them is shown in the app's interface.
+
+Verified in a real headless browser (Chromium) against a local Anvil chain with the real contract and a stand-in
+wallet: 27 checks covering validation, connect, review, rule check, approve, activate, run, pause, resume, renew,
+revoke, cancel (the contract itself reports status 2), the changed-copy prefill, the text the wallet is asked to
+sign, the mobile menu, no horizontal scrolling, and zero browser errors. Not covered: a real MetaMask (its popups
+and fee estimation) and the real Arbitrum Sepolia RPC. The browser test also needs a Multicall3 stand-in, because a
+bare Anvil chain has none and the app batches its reads through it.
 
 ## Open items (not fixed, decide before deploying)
 

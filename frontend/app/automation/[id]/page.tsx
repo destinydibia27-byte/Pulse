@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useAccount, usePublicClient, useReadContract, useWriteContract } from "wagmi";
 import { erc20Abi, formatUnits } from "viem";
 import { PULSE_CONTRACT_ADDRESS } from "../../../lib/wagmiConfig";
@@ -18,6 +18,7 @@ export default function AutomationDetail() {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  const router = useRouter();
 
   const [automation, setAutomation] = useState<any>(null);
   const [notFound, setNotFound] = useState(false);
@@ -25,6 +26,7 @@ export default function AutomationDetail() {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [revoking, setRevoking] = useState(false);
+  const [renewing, setRenewing] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -71,6 +73,7 @@ export default function AutomationDetail() {
   const history: any[] = [...(automation.history?.length ? automation.history : automation.lastExecution ? [automation.lastExecution] : [])].reverse();
   const amount = automation.amountBaseUnits ? BigInt(automation.amountBaseUnits) : null;
   const allowanceLow = status === "active" && allowance !== undefined && amount !== null && allowance < amount;
+  const needsRenewal = (status === "active" || status === "paused") && allowance !== undefined && permission !== undefined && allowance < permission.maxPerWindow;
   const isOwner = address && automation.owner && address.toLowerCase() === String(automation.owner).toLowerCase();
   const spentPct = permission && permission.maxPerWindow > 0n ? Number((permission.spentInWindow * 100n) / permission.maxPerWindow) : 0;
 
@@ -90,6 +93,34 @@ export default function AutomationDetail() {
       setRevoking(false);
       setConfirmRevoke(false);
     }
+  }
+
+  /** Same approval the review step asks for: up to the weekly cap, nothing more. */
+  async function renewApproval() {
+    setRevokeError(null);
+    if (!isOwner) { setRevokeError(`Connect the owner wallet (${shortAddr(automation.owner)}) to renew its approval.`); return; }
+    if (!permission) return;
+    setRenewing(true);
+    try {
+      const hash = await writeContractAsync({
+        address: automation.asset, abi: erc20Abi, functionName: "approve", args: [PULSE_CONTRACT_ADDRESS, permission.maxPerWindow],
+      });
+      await publicClient!.waitForTransactionReceipt({ hash });
+      await refetchAllowance();
+    } catch (e) {
+      setRevokeError((e as Error).message.split("\n")[0]);
+    } finally {
+      setRenewing(false);
+    }
+  }
+
+  /** The contract cannot edit a permission, so "edit" means: start a new rule from this one, then cancel this. */
+  function copyAsNew() {
+    const word = ({ ">": "above", ">=": "at least", "<": "below", "<=": "at most", "==": "exactly" } as Record<string, string>)[automation.condition.operator] ?? "above";
+    const day = automation.trigger.day.charAt(0).toUpperCase() + automation.trigger.day.slice(1);
+    const text = `Every ${day}, send $${USDC(amount as bigint)} to my ${automation.recipientLabel} wallet when my balance is ${word} $${USDC(automation.condition.thresholdBaseUnits)}.`;
+    sessionStorage.setItem("volo.prefill", text);
+    router.push("/");
   }
 
   async function doCancel() {
@@ -220,10 +251,18 @@ export default function AutomationDetail() {
             </dl>
             {allowanceLow && (
               <Alert tone="warning" className="mt-3">
-                The approval is smaller than one run. Runs will fail until you approve more USDC when you create a new automation.
+                The approval is smaller than one run, so the next run will fail until you renew it.
               </Alert>
             )}
             {revokeError && <Alert tone="danger" className="mt-3">{revokeError}</Alert>}
+            {needsRenewal && permission && (
+              <>
+                <button className="btn-primary mt-4 w-full" disabled={renewing || revoking} onClick={renewApproval}>
+                  {renewing && <Spinner />}{renewing ? "Waiting for your wallet…" : `Renew approval (${USDC(permission.maxPerWindow)} USDC)`}
+                </button>
+                <p className="mt-2 text-xs text-slate-600">Approves your weekly cap again, and nothing more. Your wallet asks you to confirm.</p>
+              </>
+            )}
             <button
               className="btn-danger mt-4 w-full"
               disabled={revoking || allowance === undefined || allowance === 0n}
@@ -248,8 +287,11 @@ export default function AutomationDetail() {
                 </button>
               )}
               <p className="text-xs text-slate-600">
-                Rules cannot be edited in place. To change one, cancel this automation and create a new one.
+                Rules cannot be edited in place. Start a changed copy, then cancel this one once the new one is active.
               </p>
+              {automation.trigger && automation.condition && amount !== null && (
+                <button className="btn-secondary w-full" onClick={copyAsNew}>Create a changed copy</button>
+              )}
             </div>
 
             <div className="mt-5 rounded-xl border border-red-200 bg-red-50/50 p-4">

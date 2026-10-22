@@ -9,6 +9,10 @@ import { resolveUsdcAddress } from "./constants";
  * Cloud project id, deliberately left out to keep zero-config setup working.
  */
 export const wagmiConfig = createConfig({
+  // Next.js renders on the server first. Without this, a wallet connection restored from the
+  // browser's storage changes the first client render ("Connect wallet" becomes the address chip)
+  // and React reports a hydration mismatch (errors #418 / #423).
+  ssr: true,
   chains: [arbitrumSepolia],
   connectors: [injected()],
   transports: {

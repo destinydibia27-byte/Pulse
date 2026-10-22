@@ -119,7 +119,7 @@ export default function Dashboard() {
               </div>
             ))}
           </dl>
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <div className={automations.length === 1 ? "mt-6 max-w-2xl" : "mt-6 grid gap-4 md:grid-cols-2"}>
             {automations.map((a) => (
               <AutomationCard key={a.id} a={a} actions={actions} />
             ))}

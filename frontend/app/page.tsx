@@ -30,6 +30,15 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
 
+  useEffect(() => {
+    // "Create a changed copy" on an automation leaves its rule here as plain text to edit.
+    const prefill = sessionStorage.getItem("volo.prefill");
+    if (prefill) {
+      setText(prefill.slice(0, MAX_LEN));
+      sessionStorage.removeItem("volo.prefill");
+    }
+  }, []);
+
   const trimmed = text.trim();
   const validation = !trimmed
     ? "Describe what you want to automate."

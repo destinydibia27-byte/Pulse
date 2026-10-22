@@ -16,12 +16,12 @@ export const AUTH_WINDOW_MS = 5 * 60 * 1000;
 
 /** Message signed to register a new automation. Binds the signature to this exact permission. */
 export function buildRegisterMessage(onchainId: string, owner: string, timestamp: number): string {
-  return `Pulse: register automation\nonchainId: ${onchainId}\nowner: ${owner}\ntimestamp: ${timestamp}`;
+  return `Volo: register automation\nonchainId: ${onchainId}\nowner: ${owner}\ntimestamp: ${timestamp}`;
 }
 
 /** Message signed for pause/resume/cancel/fire. Binds the signature to this exact action. */
 export function buildActionMessage(automationId: string, action: string, timestamp: number): string {
-  return `Pulse: ${action} automation\nid: ${automationId}\ntimestamp: ${timestamp}`;
+  return `Volo: ${action} automation\nid: ${automationId}\ntimestamp: ${timestamp}`;
 }
 
 export type AuthResult = { ok: true; signer: Address } | { ok: false; reason: string };
