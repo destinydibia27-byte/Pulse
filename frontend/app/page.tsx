@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAccount } from "wagmi";
 import { Alert, Spinner, StatusBadge } from "./components/ui";
+import { useOwnerAutomations } from "./components/useOwnerAutomations";
 
 const MAX_LEN = 280;
 const MIN_LEN = 12;
@@ -171,15 +172,9 @@ export default function Home() {
 }
 
 function RecentAutomations() {
-  const [items, setItems] = useState<any[] | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/automations?userId=demo")
-      .then((r) => r.json())
-      .then((d) => setItems(d.automations ?? []))
-      .catch(() => setFailed(true));
-  }, []);
+  const { address, automations, loading, loadError } = useOwnerAutomations();
+  const failed = Boolean(loadError);
+  const items = loading ? null : automations;
 
   return (
     <div className="card">
@@ -195,6 +190,8 @@ function RecentAutomations() {
             <div className="h-4 w-3/4 animate-pulse rounded bg-surface" />
             <div className="h-4 w-1/2 animate-pulse rounded bg-surface" />
           </div>
+        ) : !address ? (
+          <p className="text-sm text-slate-600">Connect your wallet to see your automations.</p>
         ) : items.length === 0 ? (
           <p className="text-sm text-slate-600">No automations yet. Describe one on the left to get started.</p>
         ) : (

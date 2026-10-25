@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import {
   saveAutomation, updateAutomation, recordExecutionResult, setStatus,
   listActiveAutomations, listAutomationsForUser, storageBackend, type AutomationRecord,
+  getRecipients, setRecipient, removeRecipient, getAutomationById,
 } from "../src/db";
 
 /**
@@ -18,6 +19,7 @@ const KEY = "sb_secret_test_key_000000";
 
 interface Stored { id: string; user_id: string; status: string; version: number; data: any; created_at: string; updated_at: string }
 let rows: Map<string, Stored>;
+let recipientRows: Map<string, { user_id: string; label: string; address: string; updated_at?: string }>;
 let seenHeaders: http.IncomingHttpHeaders[];
 let beforePatch: (() => void) | null;
 let failNext: { status: number; body: string } | null;
@@ -39,12 +41,32 @@ function handler(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = new URL(req.url!, "http://x");
   const send = (code: number, body: unknown) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(body === undefined ? "" : JSON.stringify(body)); };
   if (req.headers.apikey !== KEY) return send(401, { message: "Invalid API key" });
-  if (url.pathname !== "/rest/v1/volo_automations") return send(404, { message: "no such table" });
+  const isRecipients = url.pathname === "/rest/v1/volo_recipients";
+  if (url.pathname !== "/rest/v1/volo_automations" && !isRecipients) return send(404, { message: "no such table" });
   if (failNext) { const f = failNext; failNext = null; return send(f.status, f.body); }
   let raw = "";
   req.on("data", (c) => (raw += c));
   req.on("end", () => {
     const body = raw ? JSON.parse(raw) : undefined;
+    if (isRecipients) {
+      const key = (r: { user_id: string; label: string }) => `${r.user_id}\u0000${r.label}`;
+      if (req.method === "GET") {
+        return send(200, applyFilters([...recipientRows.values()] as any, url.searchParams));
+      }
+      if (req.method === "POST") {
+        // Upsert: only valid with the on_conflict target and the merge-duplicates preference.
+        if (url.searchParams.get("on_conflict") !== "user_id,label" || !String(req.headers.prefer).includes("resolution=merge-duplicates")) {
+          return send(409, { code: "23505", message: "duplicate key value" });
+        }
+        recipientRows.set(key(body), body);
+        return send(201, undefined);
+      }
+      if (req.method === "DELETE") {
+        for (const r of applyFilters([...recipientRows.values()] as any, url.searchParams)) recipientRows.delete(key(r as any));
+        return send(204, undefined);
+      }
+      return send(405, {});
+    }
     if (req.method === "GET") {
       const list = applyFilters([...rows.values()], url.searchParams).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
       return send(200, list);
@@ -74,7 +96,7 @@ const record = (over: Partial<AutomationRecord> = {}): AutomationRecord => ({
 });
 
 beforeEach(async () => {
-  rows = new Map(); seenHeaders = []; beforePatch = null; failNext = null; nextCreated = 0;
+  rows = new Map(); recipientRows = new Map(); seenHeaders = []; beforePatch = null; failNext = null; nextCreated = 0;
   server = http.createServer(handler);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   process.env.SUPABASE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`; // trailing slash on purpose
@@ -177,4 +199,34 @@ test("supabase: key header rules (new-style key in apikey only; legacy JWT also 
 test("supabase: ids with special characters are encoded in the filter", async () => {
   await saveAutomation(record({ id: "a b&c=d,e" }));
   assert.equal((await updateAutomation("a b&c=d,e", (r) => { r.label = "ok"; }))!.label, "ok");
+});
+
+test("supabase: recipients are stored per user, replaced on re-save, and removed by label", async () => {
+  const A = "0x01aD5f069a436f67fDCED12babE12CD9e2C19BB1";
+  const B = "0x048d453f8fA81ef9CE18f66Dd88ACEC202796a81";
+  await setRecipient("u1", "savings", A);
+  await setRecipient("u2", "savings", B);
+  await setRecipient("u1", "rent", B);
+  assert.deepEqual(await getRecipients("u1"), { rent: B, savings: A });
+  assert.deepEqual(await getRecipients("u2"), { savings: B });
+  await setRecipient("u1", "savings", B);                       // replace, no duplicate row
+  assert.equal(recipientRows.size, 3);
+  assert.equal((await getRecipients("u1")).savings, B);
+  await removeRecipient("u1", "savings");
+  assert.deepEqual(await getRecipients("u1"), { rent: B });
+  assert.deepEqual(await getRecipients("u2"), { savings: B }, "another user's book is untouched");
+});
+
+test("supabase: a user id or label with special characters stays inside its own filter", async () => {
+  const A = "0x01aD5f069a436f67fDCED12babE12CD9e2C19BB1";
+  await setRecipient("u1&user_id=neq.zzz", "a b", A);
+  await setRecipient("u1", "a b", A);
+  assert.deepEqual(Object.keys(await getRecipients("u1")), ["a b"]);
+  assert.equal(Object.keys(await getRecipients("u1&user_id=neq.zzz")).length, 1);
+});
+
+test("supabase: getAutomationById returns the record, or undefined", async () => {
+  await saveAutomation(record({ id: "0xabc-3" }));
+  assert.equal((await getAutomationById("0xabc-3"))?.id, "0xabc-3");
+  assert.equal(await getAutomationById("missing"), undefined);
 });

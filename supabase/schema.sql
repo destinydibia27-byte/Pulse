@@ -18,3 +18,19 @@ create index if not exists volo_automations_status_idx on public.volo_automation
 -- and write nothing. Only the server-side secret key can, because that key bypasses RLS.
 -- NEVER put the secret key in a NEXT_PUBLIC_ variable or in browser code.
 alter table public.volo_automations enable row level security;
+
+-- ---------------------------------------------------------------------------------------------
+-- Per-user recipients ("savings" -> 0x...). Added for multi-user use. Same rules: RLS on, no
+-- policies, only the server-side secret key can touch it. Safe to run again.
+-- ---------------------------------------------------------------------------------------------
+create table if not exists public.volo_recipients (
+  user_id    text        not null,              -- the owner's wallet address, lower case
+  label      text        not null,              -- for example "savings"
+  address    text        not null,              -- checksummed 0x address
+  updated_at timestamptz not null default now(),
+  primary key (user_id, label)
+);
+
+alter table public.volo_recipients enable row level security;
+revoke all on public.volo_recipients from anon, authenticated;
+grant all on public.volo_recipients to service_role;

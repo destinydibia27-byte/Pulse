@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseUserIntent } from "../../../lib/parser";
+import { rateLimited } from "../../../lib/guard";
 
 /**
  * Calls Groq (OpenAI-compatible chat completions API). If no API key is
@@ -65,9 +66,11 @@ function mockParse(user: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  const { text } = await req.json();
-  if (!text || typeof text !== "string") {
-    return NextResponse.json({ ok: false, reason: "Missing 'text'." }, { status: 400 });
+  const limited = rateLimited(req, "parse");
+  if (limited) return limited;
+  const { text } = await req.json().catch(() => ({}));
+  if (!text || typeof text !== "string" || text.length > 1000) {
+    return NextResponse.json({ ok: false, reason: "Describe the automation in up to 1000 characters." }, { status: 400 });
   }
 
   const result = await parseUserIntent(text, callLLM);

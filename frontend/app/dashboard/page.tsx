@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { formatUnits } from "viem";
 import { nextRunDate, isValidTimeZone } from "../../lib/scheduler";
@@ -8,6 +8,7 @@ import { formatDateTime, shortAddr } from "../../lib/explorer";
 import { Alert, EmptyState, ExplorerLink, Spinner, StatusBadge } from "../components/ui";
 import { useAutomationActions } from "../components/useAutomationActions";
 import { useOnchainPermission } from "../components/useOnchain";
+import { useOwnerAutomations } from "../components/useOwnerAutomations";
 
 const USDC = (base: string | bigint) => formatUnits(BigInt(base), 6);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -35,35 +36,18 @@ function schedule(a: any) {
 }
 
 export default function Dashboard() {
-  const [automations, setAutomations] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const { address, automations, loading, loadError, load, setLoading } = useOwnerAutomations();
   const [created, setCreated] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/automations?userId=demo");
-      if (!res.ok) throw new Error(`The server answered ${res.status}.`);
-      const data = await res.json();
-      setAutomations(data.automations ?? []);
-      setLoadError(null);
-    } catch (e) {
-      setLoadError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   const actions = useAutomationActions(load);
 
   useEffect(() => {
-    load();
     // Shown only when the review flow navigated here after the permission was really created.
     if (new URLSearchParams(window.location.search).get("created") === "1") {
       setCreated(true);
       window.history.replaceState(null, "", "/dashboard");
     }
-  }, [load]);
+  }, []);
 
   const counts = {
     active: automations.filter((a) => a.status === "active").length,
@@ -93,6 +77,12 @@ export default function Dashboard() {
       {loading ? (
         <div className="mt-8 grid gap-4 md:grid-cols-2" aria-label="Loading automations">
           {[0, 1].map((i) => <div key={i} className="card h-64 animate-pulse" />)}
+        </div>
+      ) : !address ? (
+        <div className="mt-8">
+          <EmptyState title="Connect your wallet" action={<span className="text-sm text-slate-600">Use the button at the top right.</span>}>
+            Volo files your automations under your wallet address, so connect to see them.
+          </EmptyState>
         </div>
       ) : loadError ? (
         <div className="mt-8">

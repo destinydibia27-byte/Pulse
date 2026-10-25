@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { contractEventsUrl, formatDateTime } from "../../lib/explorer";
 import { PULSE_CONTRACT_ADDRESS } from "../../lib/wagmiConfig";
 import { Alert, EmptyState, ExplorerLink, StatusBadge } from "../components/ui";
+import { useOwnerAutomations } from "../components/useOwnerAutomations";
 
 type Entry = {
   key: string; automationId: string; label: string;
@@ -29,21 +30,9 @@ const FILTERS = [
 ] as const;
 
 export default function Activity() {
-  const [entries, setEntries] = useState<Entry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { address, automations, loading, loadError: error, load } = useOwnerAutomations();
+  const entries: Entry[] | null = loading ? null : flatten(automations);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
-
-  async function load() {
-    setError(null);
-    try {
-      const res = await fetch("/api/automations?userId=demo");
-      if (!res.ok) throw new Error(`The server answered ${res.status}.`);
-      setEntries(flatten((await res.json()).automations ?? []));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  useEffect(() => { load(); }, []);
 
   const shown = useMemo(
     () => (entries ?? []).filter((e) => filter === "all" || e.status === filter),
@@ -85,7 +74,11 @@ export default function Activity() {
       </div>
 
       <div className="mt-4">
-        {error ? (
+        {!address && !loading ? (
+          <EmptyState title="Connect your wallet" action={<span className="text-sm text-slate-600">Use the button at the top right.</span>}>
+            Volo files your automations under your wallet address, so connect to see them.
+          </EmptyState>
+        ) : error ? (
           <EmptyState title="Could not load activity" action={<button className="btn-secondary" onClick={load}>Try again</button>}>
             {error}
           </EmptyState>

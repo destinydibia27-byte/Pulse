@@ -10,6 +10,7 @@ const NAV = [
   { href: "/", label: "Automate" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/activity", label: "Activity" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export function SiteHeader() {

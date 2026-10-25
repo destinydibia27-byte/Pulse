@@ -21,13 +21,10 @@ try {
 }
 
 // Names only, never values: make a missing setting obvious at startup instead of at send time.
-const watched = ["ARBITRUM_SEPOLIA_RPC_URL", "PULSE_CONTRACT_ADDRESS", "NEXT_PUBLIC_PULSE_CONTRACT_ADDRESS", "DEMO_SAVINGS_ADDRESS"];
+const watched = ["ARBITRUM_SEPOLIA_RPC_URL", "PULSE_CONTRACT_ADDRESS", "NEXT_PUBLIC_PULSE_CONTRACT_ADDRESS"];
 const missing = watched.filter((k) => !process.env[k]);
 console.log(`[pulse] env file: ${envFile}`);
 console.log(missing.length ? `[pulse] NOT SET: ${missing.join(", ")}` : "[pulse] all key settings present");
-if (!process.env.DEMO_SAVINGS_ADDRESS) {
-  console.log("[pulse] WARNING: DEMO_SAVINGS_ADDRESS is not set, so \"savings\" is a PUBLIC demo address anyone can spend from.");
-}
 
 const nextBin = require.resolve("next/dist/bin/next");
 const child = spawn(process.execPath, [nextBin, ...process.argv.slice(2)], {

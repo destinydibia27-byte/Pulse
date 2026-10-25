@@ -122,13 +122,13 @@ class SupabaseError extends Error {
   }
 }
 
-async function rest(method: "GET" | "POST" | "PATCH", query: string, body?: unknown, prefer?: string): Promise<Row[]> {
+async function rest<T = Row>(method: "GET" | "POST" | "PATCH" | "DELETE", query: string, body?: unknown, prefer?: string, table: string = TABLE): Promise<T[]> {
   const cfg = supabaseConfig()!;
   const headers: Record<string, string> = { apikey: cfg.key, "Content-Type": "application/json" };
   // New-style keys (sb_secret_...) go in apikey only. A legacy key is a JWT and is also sent as a bearer token.
   if (cfg.key.startsWith("eyJ")) headers.Authorization = `Bearer ${cfg.key}`;
   if (prefer) headers.Prefer = prefer;
-  const res = await fetch(`${cfg.url}/rest/v1/${TABLE}${query}`, {
+  const res = await fetch(`${cfg.url}/rest/v1/${table}${query}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -137,7 +137,7 @@ async function rest(method: "GET" | "POST" | "PATCH", query: string, body?: unkn
   });
   const text = await res.text();
   if (!res.ok) throw new SupabaseError(res.status, text);
-  return text ? (JSON.parse(text) as Row[]) : [];
+  return text ? (JSON.parse(text) as T[]) : [];
 }
 
 const enc = encodeURIComponent;
@@ -190,6 +190,81 @@ async function sbSave(record: AutomationRecord): Promise<void> {
   }
   throw new Error(`Could not save automation ${record.id}: it kept changing under us. Try again.`);
 }
+
+
+// ------------------------------------------------------------------ recipients (per user)
+
+/** One user's saved recipients: label -> checksummed address. */
+export type RecipientBook = Record<string, `0x${string}`>;
+const RECIPIENTS_TABLE = "volo_recipients";
+
+function recipientsPath(): string {
+  return `${dbPath()}.recipients.json`;
+}
+async function readRecipientsFile(): Promise<Record<string, RecipientBook>> {
+  try {
+    return JSON.parse(await fs.readFile(recipientsPath(), "utf8"));
+  } catch (err: any) {
+    if (err.code === "ENOENT") return {};
+    throw err;
+  }
+}
+async function writeRecipientsFile(all: Record<string, RecipientBook>): Promise<void> {
+  const file = recipientsPath();
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(all, null, 2));
+  await fs.rename(tmp, file);
+}
+
+export const getRecipients = async (userId: string): Promise<RecipientBook> => {
+  if (supabaseConfig()) {
+    const rows = await rest<{ label: string; address: `0x${string}` }>(
+      "GET", `?select=label,address&user_id=eq.${enc(userId)}&order=label.asc`, undefined, undefined, RECIPIENTS_TABLE
+    );
+    return Object.fromEntries(rows.map((r) => [r.label, r.address]));
+  }
+  return locked(async () => ({ ...((await readRecipientsFile())[userId] ?? {}) }));
+};
+
+/** Saves or replaces one label. Last write wins (a single value per label, so there is nothing to merge). */
+export const setRecipient = async (userId: string, label: string, address: `0x${string}`): Promise<void> => {
+  if (supabaseConfig()) {
+    await rest(
+      "POST", "?on_conflict=user_id,label",
+      { user_id: userId, label, address, updated_at: new Date().toISOString() },
+      "resolution=merge-duplicates,return=minimal", RECIPIENTS_TABLE
+    );
+    return;
+  }
+  await locked(async () => {
+    const all = await readRecipientsFile();
+    all[userId] = { ...(all[userId] ?? {}), [label]: address };
+    await writeRecipientsFile(all);
+  });
+};
+
+export const removeRecipient = async (userId: string, label: string): Promise<void> => {
+  if (supabaseConfig()) {
+    await rest("DELETE", `?user_id=eq.${enc(userId)}&label=eq.${enc(label)}`, undefined, "return=minimal", RECIPIENTS_TABLE);
+    return;
+  }
+  await locked(async () => {
+    const all = await readRecipientsFile();
+    if (all[userId]) {
+      delete all[userId][label];
+      if (Object.keys(all[userId]).length === 0) delete all[userId];
+      await writeRecipientsFile(all);
+    }
+  });
+};
+
+export const getAutomationById = async (id: string): Promise<AutomationRecord | undefined> => {
+  if (supabaseConfig()) {
+    return (await rest("GET", `?select=id,version,data&id=eq.${enc(id)}`))[0]?.data;
+  }
+  return locked(async () => (await readAll()).find((a) => a.id === id));
+};
 
 export const listActiveAutomations = () =>
   supabaseConfig()

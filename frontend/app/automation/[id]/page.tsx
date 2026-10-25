@@ -31,9 +31,15 @@ export default function AutomationDetail() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/automations?userId=demo");
-      if (!res.ok) throw new Error(`The server answered ${res.status}.`);
-      const found = ((await res.json()).automations ?? []).find((a: any) => a.id === id);
+      const res = await fetch(`/api/automations?id=${encodeURIComponent(id)}`);
+      if (res.status === 404) {
+        setAutomation(null);
+        setNotFound(true);
+        setLoadError(null);
+        return;
+      }
+      if (!res.ok) throw new Error(res.status === 429 ? "Too many requests. Wait a minute and try again." : `The server answered ${res.status}.`);
+      const found = ((await res.json()).automations ?? [])[0];
       setAutomation(found ?? null);
       setNotFound(!found);
       setLoadError(null);

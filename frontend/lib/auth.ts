@@ -24,6 +24,16 @@ export function buildActionMessage(automationId: string, action: string, timesta
   return `Volo: ${action} automation\nid: ${automationId}\ntimestamp: ${timestamp}`;
 }
 
+/** Message signed to save (or replace) one of the owner's recipients. Binds label, address, owner and time. */
+export function buildRecipientSetMessage(owner: string, label: string, address: string, timestamp: number): string {
+  return `Volo: save recipient\nowner: ${owner}\nlabel: ${label}\naddress: ${address}\ntimestamp: ${timestamp}`;
+}
+
+/** Message signed to remove one of the owner's recipients. */
+export function buildRecipientRemoveMessage(owner: string, label: string, timestamp: number): string {
+  return `Volo: remove recipient\nowner: ${owner}\nlabel: ${label}\ntimestamp: ${timestamp}`;
+}
+
 export type AuthResult = { ok: true; signer: Address } | { ok: false; reason: string };
 
 export interface AuthInput {

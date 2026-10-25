@@ -30,7 +30,7 @@ export function useAutomationActions(onChanged?: () => void) {
     const res = await fetch("/api/execute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: "demo", automationId, action, signature, timestamp }),
+      body: JSON.stringify({ automationId, action, signature, timestamp }),
     });
     return res.json();
   }

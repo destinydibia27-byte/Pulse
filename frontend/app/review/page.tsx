@@ -66,7 +66,7 @@ export default function Review() {
       const res = await fetch("/api/policy-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: "demo", intent: pending.intent, owner: address }),
+        body: JSON.stringify({ intent: pending.intent, owner: address }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -155,8 +155,6 @@ export default function Review() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           onchainId: onchainId.toString(),
-          // MVP limitation: rows are keyed by a fixed "demo" user, not the wallet address.
-          userId: "demo",
           owner: address,
           // The server re-derives schedule, condition, amount and expiry from the intent
           // and checks them against the on-chain permission, so none are sent separately.
@@ -235,11 +233,7 @@ export default function Review() {
               <DetailRow label="Max per week">${intent.maxPerWindow}</DetailRow>
               <DetailRow label="Expires">{new Date(intent.expiresAt).toLocaleDateString()}</DetailRow>
             </dl>
-            {checkResult?.policy?.recipientIsPublicDefault && (
-              <Alert tone="warning" title="This sends to a public demo address" className="mt-3">
-                Anyone can spend from it. Set DEMO_SAVINGS_ADDRESS to your own wallet and restart the app before approving.
-              </Alert>
-            )}
+            
             <p className="mt-3 text-xs text-slate-600">
               Days are read in UTC because the contract has no way to know your timezone. In some timezones a few hours of your
               local {cap(intent.trigger.day)} fall on the neighboring UTC day.
@@ -247,7 +241,17 @@ export default function Review() {
           </section>
 
           {!isConnected && <Alert tone="warning">Connect a wallet (top right) before you approve.</Alert>}
-          {error && <Alert tone="danger" title="That did not work">{error}</Alert>}
+          {error && (
+            <Alert tone="danger" title="That did not work">
+              {error}
+              {/pre-approved recipient/i.test(error) && (
+                <>
+                  {" "}
+                  <Link href="/settings" className="font-semibold underline">Save this recipient in Settings</Link>, then check the rule again.
+                </>
+              )}
+            </Alert>
+          )}
 
           {!checkResult ? (
             <section className="card" aria-labelledby="check">
