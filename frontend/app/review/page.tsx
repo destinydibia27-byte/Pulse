@@ -199,7 +199,7 @@ export default function Review() {
           const current = n === step && phase !== "done";
           return (
             <li key={label} className="flex items-center gap-2" aria-current={current ? "step" : undefined}>
-              <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${done ? "bg-success text-white" : current ? "bg-brand text-white" : "bg-white text-muted ring-1 ring-line"}`} aria-hidden="true">
+              <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${done ? "bg-success text-white" : current ? "bg-brand text-white" : "bg-card text-muted ring-1 ring-line"}`} aria-hidden="true">
                 {done ? "✓" : n}
               </span>
               <span className={current ? "font-semibold text-navy" : "text-slate-600"}>{label}</span>

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useAccount } from "wagmi";
 import { Alert, Spinner, StatusBadge } from "./components/ui";
 import { useOwnerAutomations } from "./components/useOwnerAutomations";
 
@@ -17,15 +16,8 @@ const EXAMPLES = [
   { title: "Sunday sweep", text: "Every Sunday, send $5 to my savings wallet when my balance is above $50." },
 ];
 
-const STEPS = [
-  { n: "1", title: "Create", body: "Describe an onchain action in plain English." },
-  { n: "2", title: "Control", body: "Review the exact rules and permissions before you approve anything." },
-  { n: "3", title: "Verify", body: "Every run is a transaction you can open on Arbiscan, next to the contract's own status." },
-];
-
 export default function Home() {
   const router = useRouter();
-  const { isConnected } = useAccount();
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,7 +112,7 @@ export default function Home() {
                   key={ex.title}
                   type="button"
                   onClick={() => { setText(ex.text); setError(null); setTouched(false); }}
-                  className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-brand hover:bg-brand-soft hover:text-brand-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
+                  className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-brand hover:bg-brand-soft hover:text-brand-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
                 >
                   {ex.title}
                 </button>
@@ -140,31 +132,9 @@ export default function Home() {
             </p>
           </div>
         </form>
-
-        {!isConnected && (
-          <Alert tone="info" className="mt-4">
-            You can build and review without a wallet. You will connect one (top right) to approve.
-          </Alert>
-        )}
       </section>
 
       <aside className="space-y-4">
-        <div className="card">
-          <p className="eyebrow">How Volo works</p>
-          <ol className="mt-3 space-y-4">
-            {STEPS.map((s) => (
-              <li key={s.n} className="flex gap-3">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-bold text-white" aria-hidden="true">
-                  {s.n}
-                </span>
-                <div>
-                  <p className="text-sm font-semibold text-navy">{s.title}</p>
-                  <p className="text-sm text-slate-600">{s.body}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
         <RecentAutomations />
       </aside>
     </main>
@@ -180,7 +150,7 @@ function RecentAutomations() {
     <div className="card">
       <div className="flex items-center justify-between">
         <p className="eyebrow">Your automations</p>
-        <Link href="/dashboard" className="text-xs font-semibold text-brand hover:underline">View all →</Link>
+        <Link href="/dashboard" className="text-xs font-semibold text-link hover:underline">View all →</Link>
       </div>
       <div className="mt-3">
         {failed ? (
@@ -198,7 +168,7 @@ function RecentAutomations() {
           <ul className="space-y-2.5">
             {items.slice(-3).reverse().map((a) => (
               <li key={a.id} className="flex items-center justify-between gap-3">
-                <Link href={`/automation/${a.id}`} className="min-w-0 truncate text-sm font-medium text-navy hover:text-brand">
+                <Link href={`/automation/${a.id}`} className="min-w-0 truncate text-sm font-medium text-navy hover:text-link">
                   {a.label}
                 </Link>
                 <StatusBadge status={a.status} />

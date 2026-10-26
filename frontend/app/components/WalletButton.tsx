@@ -15,7 +15,7 @@ export function WalletButton() {
     const wrongNetwork = !chain;
     return (
       <div className="flex items-center gap-1.5">
-        <div className="flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-1.5 text-sm" title={address}>
+        <div className="flex items-center gap-2 rounded-xl border border-line bg-card px-3 py-1.5 text-sm" title={address}>
           <span
             className={`h-2 w-2 rounded-full ${wrongNetwork ? "bg-amber-500" : "bg-success"}`}
             aria-hidden="true"

@@ -65,7 +65,7 @@ export default function Activity() {
             onClick={() => setFilter(f.id)}
             aria-pressed={filter === f.id}
             className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric ${
-              filter === f.id ? "border-brand bg-brand text-white" : "border-line bg-white text-slate-700 hover:bg-brand-soft"
+              filter === f.id ? "border-brand bg-brand text-white" : "border-line bg-card text-slate-700 hover:bg-brand-soft"
             }`}
           >
             {f.label}
@@ -95,7 +95,7 @@ export default function Activity() {
             {shown.map((e) => (
               <li key={e.key} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-                  <Link href={`/automation/${e.automationId}`} className="font-semibold text-navy hover:text-brand">{e.label}</Link>
+                  <Link href={`/automation/${e.automationId}`} className="font-semibold text-navy hover:text-link">{e.label}</Link>
                   <p className="mt-0.5 text-xs text-muted">{formatDateTime(e.at)}</p>
                   {(e.reason || e.error) && <p className="mt-1 text-sm text-slate-700">{e.reason ?? e.error}</p>}
                 </div>

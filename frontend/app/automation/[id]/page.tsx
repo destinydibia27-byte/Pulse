@@ -239,7 +239,7 @@ export default function AutomationDetail() {
             {PULSE_CONTRACT_ADDRESS && (
               <p className="mt-3 text-xs text-slate-600">
                 To check independently, open the contract&apos;s{" "}
-                <a className="font-semibold text-brand hover:underline" href={contractEventsUrl(PULSE_CONTRACT_ADDRESS)} target="_blank" rel="noopener noreferrer">event log on Arbiscan</a>.
+                <a className="font-semibold text-link hover:underline" href={contractEventsUrl(PULSE_CONTRACT_ADDRESS)} target="_blank" rel="noopener noreferrer">event log on Arbiscan</a>.
               </p>
             )}
           </section>

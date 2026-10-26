@@ -112,7 +112,7 @@ export default function Settings() {
       <section className="card mt-6" aria-labelledby="saved">
         <h2 id="saved" className="text-base font-semibold text-navy">Saved recipients</h2>
         {loadError ? (
-          <p className="mt-3 text-sm text-slate-700">Could not load them: {loadError} <button className="font-semibold text-brand underline" onClick={load}>Try again</button></p>
+          <p className="mt-3 text-sm text-slate-700">Could not load them: {loadError} <button className="font-semibold text-link underline" onClick={load}>Try again</button></p>
         ) : book === null ? (
           <div className="mt-3 h-10 animate-pulse rounded bg-surface" aria-label="Loading" />
         ) : Object.keys(book).length === 0 ? (
@@ -183,7 +183,7 @@ export default function Settings() {
             <p className="mt-1 text-slate-700">
               Automations that say &ldquo;{cleanLabel}&rdquo; will send USDC to:
             </p>
-            <p className="mt-2 break-all rounded-lg bg-white px-3 py-2 font-mono text-[13px] text-navy">{checked.address}</p>
+            <p className="mt-2 break-all rounded-lg bg-card px-3 py-2 font-mono text-[13px] text-navy">{checked.address}</p>
             <p className="mt-2 text-slate-600">
               A wrong address means lost money, and the blockchain cannot undo it. Compare it with your wallet, character by character, and
               try a very small amount first.

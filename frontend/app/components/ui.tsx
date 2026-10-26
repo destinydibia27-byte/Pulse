@@ -6,7 +6,7 @@ import { addressUrl, shortAddr, shortHash, txUrl } from "../../lib/explorer";
 export type Tone = "info" | "success" | "warning" | "danger" | "neutral";
 
 const TONE: Record<Tone, string> = {
-  info: "border-brand/25 bg-brand-soft text-brand-dark",
+  info: "border-brand/25 bg-brand-soft text-brand-ink",
   success: "border-success/30 bg-success-soft text-green-800",
   warning: "border-amber-300 bg-amber-50 text-amber-900",
   danger: "border-red-300 bg-red-50 text-red-800",
@@ -62,8 +62,8 @@ export function Alert({ tone = "info", title, children, className = "" }: {
 
 export function EmptyState({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-dashed border-line bg-white px-6 py-12 text-center">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-soft text-brand" aria-hidden="true">
+    <div className="rounded-2xl border border-dashed border-line bg-card px-6 py-12 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-soft text-link" aria-hidden="true">
         <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 3v4M12 17v4M3 12h4M17 12h4" /><circle cx="12" cy="12" r="3" />
         </svg>
@@ -81,7 +81,7 @@ export function ExplorerLink({ kind, value, children }: { kind: "tx" | "address"
       href={kind === "tx" ? txUrl(value) : addressUrl(value)}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex items-center gap-1 font-medium text-brand hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
+      className="inline-flex items-center gap-1 font-medium text-link hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
     >
       <span className="font-mono text-[13px]">{children ?? (kind === "tx" ? shortHash(value) : shortAddr(value))}</span>
       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -125,7 +125,7 @@ export function ConfirmDialog({
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-navy/60 p-4 sm:items-center" onClick={() => !busy && onClose()}>
       <div
         role="dialog" aria-modal="true" aria-labelledby="dialog-title"
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+        className="w-full max-w-md rounded-2xl bg-card p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="dialog-title" className="text-lg font-semibold text-navy">{title}</h2>

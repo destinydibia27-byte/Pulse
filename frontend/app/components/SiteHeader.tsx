@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { Logo } from "./Logo";
+import { ThemeToggle } from "./ThemeToggle";
 import { WalletButton } from "./WalletButton";
 
 const NAV = [
@@ -19,23 +20,20 @@ export function SiteHeader() {
   const isActive = (href: string) => (href === "/" ? pathname === "/" || pathname.startsWith("/review") : pathname.startsWith(href));
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-white">
+    <header className="sticky top-0 z-40 border-b border-line bg-card">
       <div className="mx-auto flex h-16 max-w-5xl items-center gap-4 px-4 sm:px-6">
         <Link href="/" aria-label="Volo home" className="rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric">
           <Logo />
         </Link>
-        <span className="hidden rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs font-medium text-slate-600 sm:inline">
-          Arbitrum Sepolia · testnet
-        </span>
 
-        <nav aria-label="Main" className="ml-4 hidden items-center gap-1 md:flex">
+        <nav aria-label="Main" className="ml-2 hidden items-center gap-1 md:flex">
           {NAV.map((n) => (
             <Link
               key={n.href}
               href={n.href}
               aria-current={isActive(n.href) ? "page" : undefined}
               className={`rounded-lg px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric ${
-                isActive(n.href) ? "bg-brand-soft text-brand-dark" : "text-slate-600 hover:bg-surface hover:text-navy"
+                isActive(n.href) ? "bg-brand-soft text-brand-ink" : "text-slate-600 hover:bg-surface hover:text-navy"
               }`}
             >
               {n.label}
@@ -45,6 +43,7 @@ export function SiteHeader() {
 
         <div className="ml-auto flex items-center gap-2">
           <WalletButton />
+          <ThemeToggle />
           <button
             className="btn-secondary !px-2.5 !py-2 md:hidden"
             aria-expanded={open}
@@ -60,7 +59,7 @@ export function SiteHeader() {
       </div>
 
       {open && (
-        <nav id="mobile-nav" aria-label="Main" className="border-t border-line bg-white px-4 py-3 md:hidden">
+        <nav id="mobile-nav" aria-label="Main" className="border-t border-line bg-card px-4 py-3 md:hidden">
           <ul className="space-y-1">
             {NAV.map((n) => (
               <li key={n.href}>
@@ -69,7 +68,7 @@ export function SiteHeader() {
                   onClick={() => setOpen(false)}
                   aria-current={isActive(n.href) ? "page" : undefined}
                   className={`block rounded-lg px-3 py-2.5 text-sm font-semibold ${
-                    isActive(n.href) ? "bg-brand-soft text-brand-dark" : "text-slate-700 hover:bg-surface"
+                    isActive(n.href) ? "bg-brand-soft text-brand-ink" : "text-slate-700 hover:bg-surface"
                   }`}
                 >
                   {n.label}
@@ -77,7 +76,6 @@ export function SiteHeader() {
               </li>
             ))}
           </ul>
-          <p className="mt-3 px-3 text-xs text-muted">Arbitrum Sepolia testnet</p>
         </nav>
       )}
     </header>

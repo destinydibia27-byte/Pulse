@@ -96,14 +96,15 @@ export default function Dashboard() {
       ) : automations.length === 0 ? (
         <div className="mt-8">
           <EmptyState title="No automations yet" action={<Link href="/" className="btn-primary">Describe your first automation</Link>}>
-            Describe what you want in plain English, review the rules and permissions, then approve it in your wallet.
+            Describe what you want in plain English, review the rules and permissions, then approve it in your wallet.{" "}
+            <Link href="/welcome" className="font-semibold text-link underline">New here? See how it works.</Link>
           </EmptyState>
         </div>
       ) : (
         <>
           <dl className="mt-6 grid grid-cols-3 gap-3 sm:max-w-md">
             {[["Active", counts.active], ["Paused", counts.paused], ["Ended", counts.ended]].map(([label, n]) => (
-              <div key={label as string} className="rounded-xl border border-line bg-white px-4 py-3">
+              <div key={label as string} className="rounded-xl border border-line bg-card px-4 py-3">
                 <dt className="text-xs font-medium text-muted">{label}</dt>
                 <dd className="text-2xl font-bold tabular-nums text-navy">{n}</dd>
               </div>
@@ -133,7 +134,7 @@ function AutomationCard({ a, actions }: { a: any; actions: ReturnType<typeof use
     <article className="card flex flex-col">
       <div className="flex items-start justify-between gap-3">
         <h2 className="min-w-0 text-base font-semibold leading-snug text-navy">
-          <Link href={`/automation/${a.id}`} className="hover:text-brand">{a.label}</Link>
+          <Link href={`/automation/${a.id}`} className="hover:text-link">{a.label}</Link>
         </h2>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <StatusBadge status={status} />
