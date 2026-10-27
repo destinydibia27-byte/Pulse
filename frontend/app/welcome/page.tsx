@@ -122,6 +122,10 @@ export default function Welcome() {
           the contract is unaudited. You need a little test ETH for gas and some test USDC in the wallet you connect. Both are free from public
           test-network faucets. Please don&apos;t use funds you cannot afford to lose.
         </p>
+        <p className="mt-3 text-sm text-slate-600">
+          To read your sentence, Volo sends the text you type to an AI service. It sees only that text, never your wallet or keys. Don&apos;t type
+          private keys, seed phrases or anything secret into a rule.
+        </p>
       </section>
     </main>
   );

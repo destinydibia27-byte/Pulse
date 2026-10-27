@@ -45,7 +45,7 @@ export async function GET() {
     backend = storageBackend();
     await listAutomationsForUser("__health__");
     return NextResponse.json(
-      { ok: true, storage: backend, executor: await executorStatus() },
+      { ok: true, storage: backend, executor: await executorStatus(), parser: process.env.GROQ_API_KEY?.trim() ? "llm" : "offline" },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (e) {
