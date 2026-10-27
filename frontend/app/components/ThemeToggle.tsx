@@ -39,7 +39,7 @@ export function ThemeToggle() {
 
   const label = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
   return (
-    <button type="button" onClick={toggle} className="btn-secondary !px-2.5 !py-2" aria-label={label} title={label} disabled={theme === null}>
+    <button type="button" onClick={toggle} className="icon-btn" aria-label={label} title={label} disabled={theme === null}>
       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         {theme === "dark" ? (
           <>

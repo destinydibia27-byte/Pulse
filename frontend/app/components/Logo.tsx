@@ -15,7 +15,8 @@ export function Logo({ className = "" }: { className?: string }) {
   return (
     <span className={`inline-flex items-center gap-2.5 ${className}`}>
       <LogoMark className="h-7 w-auto text-link" />
-      <span className="text-xl font-bold tracking-tight text-navy">Volo</span>
+      {/* Phones show the mark alone, which leaves room for the wallet and menu buttons. */}
+      <span className="hidden text-xl font-bold tracking-tight text-navy sm:inline">Volo</span>
     </span>
   );
 }
