@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getAddress, isAddress } from "viem";
-import { listAutomationsForUser, saveAutomation, type AutomationRecord } from "../../../lib/db";
+import { getAutomationById, listAutomationsForUser, saveAutomation, type AutomationRecord } from "../../../lib/db";
 import { IntentSchema } from "../../../lib/schema";
 import {
   resolvePolicy,
@@ -9,19 +9,32 @@ import {
   PolicyRejection,
 } from "../../../lib/policyEngine";
 import { verifyPermissionOnChain } from "../../../lib/chain";
-import { APPROVED_RECIPIENTS, USDC_ADDRESS, chainConfigured } from "../../../lib/appConfig";
+import { approvedRecipientsFor, USDC_ADDRESS, chainConfigured } from "../../../lib/appConfig";
+import { maxAutomationsPerOwner, rateLimited, userKey } from "../../../lib/guard";
 import { buildRegisterMessage, verifyAuth } from "../../../lib/auth";
 import { consumeOnce, sweepExpired } from "../../../lib/nonceGuard";
 
+/** Lists one wallet's automations. Anything here is also public on-chain, so no sign-in is needed to read. */
 export async function GET(req: NextRequest) {
-  const userId = req.nextUrl.searchParams.get("userId") ?? "demo";
-  const automations = await listAutomationsForUser(userId);
+  const limited = rateLimited(req, "list");
+  if (limited) return limited;
+  const id = req.nextUrl.searchParams.get("id");
+  if (id) {
+    const automation = await getAutomationById(id);
+    return automation
+      ? NextResponse.json({ automations: [automation] })
+      : NextResponse.json({ ok: false, reason: "Automation not found." }, { status: 404 });
+  }
+  const owner = req.nextUrl.searchParams.get("owner");
+  if (!owner || !isAddress(owner)) {
+    return NextResponse.json({ ok: false, reason: "Pass ?owner=<wallet address> or ?id=<automation id>." }, { status: 400 });
+  }
+  const automations = await listAutomationsForUser(userKey(getAddress(owner)));
   return NextResponse.json({ automations });
 }
 
 const Body = z.object({
   onchainId: z.string().regex(/^\d+$/, "onchainId must be a non-negative integer string"),
-  userId: z.string().min(1).default("demo"),
   owner: z.string().refine((v) => isAddress(v), "owner must be a valid address"),
   intent: IntentSchema,
   signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/, "signature must be a valid 65-byte hex signature"),
@@ -37,12 +50,12 @@ const Body = z.object({
  * background worker acts on this record, so it must describe a permission that
  * really exists, is active, and belongs to `owner`.
  *
- * MVP limitation: there is no user authentication, so anyone who can reach this
- * endpoint and knows a wallet's permission can register a schedule for it. That is
- * bounded by the contract (caps, locked recipient, expiry) but not prevented.
- * Add a wallet-signature check before any shared deployment.
+ * Authentication is the wallet signature above, plus the on-chain read-back that the
+ * permission really belongs to that wallet. Records are filed under the owner's address.
  */
 export async function POST(req: NextRequest) {
+  const limited = rateLimited(req, "write");
+  if (limited) return limited;
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
@@ -50,8 +63,10 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  const { onchainId, userId, intent, signature, timestamp } = parsed.data;
+  const { onchainId, intent, signature, timestamp } = parsed.data;
   const owner = getAddress(parsed.data.owner);
+  // The user IS the wallet. Whatever the client claims, records are filed under the signer's address.
+  const userId = userKey(owner);
 
   // Proves the caller controls `owner`'s private key right now. This does NOT by
   // itself prove `owner` holds the on-chain permission — verifyPermissionOnChain
@@ -75,7 +90,7 @@ export async function POST(req: NextRequest) {
 
   let policy;
   try {
-    policy = resolvePolicy(userId, intent, USDC_ADDRESS, APPROVED_RECIPIENTS);
+    policy = resolvePolicy(userId, intent, USDC_ADDRESS, await approvedRecipientsFor(userId));
   } catch (err) {
     if (err instanceof PolicyRejection) {
       return NextResponse.json({ ok: false, reason: err.message }, { status: 422 });
@@ -85,8 +100,17 @@ export async function POST(req: NextRequest) {
 
   // Idempotent: never overwrite an existing record (it holds the worker's run state).
   const id = `${userId}-${onchainId}`;
-  const existing = (await listAutomationsForUser(userId)).find((a) => a.id === id);
+  const mine = await listAutomationsForUser(userId);
+  const existing = mine.find((a) => a.id === id);
   if (existing) return NextResponse.json({ ok: true, automation: existing, alreadyRegistered: true });
+  // Backstop for the same limit policy-check applies before anything is signed on-chain.
+  const live = mine.filter((a) => a.status === "active" || a.status === "paused").length;
+  if (live >= maxAutomationsPerOwner()) {
+    return NextResponse.json(
+      { ok: false, reason: `You already have ${live} automations, the most this testnet allows. Cancel one on the Dashboard first.` },
+      { status: 422 }
+    );
+  }
 
   let verified = false;
   if (chainConfigured()) {

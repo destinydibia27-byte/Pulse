@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { formatUnits } from "viem";
-import { useWriteContract, usePublicClient, useSignMessage } from "wagmi";
-import { PULSE_ABI } from "../../lib/abi";
-import { PULSE_CONTRACT_ADDRESS } from "../../lib/wagmiConfig";
 import { nextRunDate, isValidTimeZone } from "../../lib/scheduler";
-import { buildActionMessage } from "../../lib/auth";
+import { formatDateTime, shortAddr } from "../../lib/explorer";
+import { Alert, EmptyState, ExplorerLink, Spinner, StatusBadge } from "../components/ui";
+import { useAutomationActions } from "../components/useAutomationActions";
+import { useOnchainPermission } from "../components/useOnchain";
+import { useOwnerAutomations } from "../components/useOwnerAutomations";
 
-const USDC = (base: string) => formatUnits(BigInt(base), 6);
+const USDC = (base: string | bigint) => formatUnits(BigInt(base), 6);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** e.g. "Fri, Oct 2". Pure calendar date, so it never shifts with the viewer's timezone. */
@@ -35,125 +36,189 @@ function schedule(a: any) {
 }
 
 export default function Dashboard() {
-  const [automations, setAutomations] = useState<any[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const { writeContractAsync } = useWriteContract();
-  const { signMessageAsync } = useSignMessage();
-  const publicClient = usePublicClient();
+  const { address, automations, loading, loadError, load, setLoading } = useOwnerAutomations();
+  const [created, setCreated] = useState(false);
 
-  async function load() {
-    const res = await fetch("/api/automations?userId=demo");
-    const data = await res.json();
-    setAutomations(data.automations ?? []);
-  }
+  const actions = useAutomationActions(load);
 
   useEffect(() => {
-    load();
+    // Shown only when the review flow navigated here after the permission was really created.
+    if (new URLSearchParams(window.location.search).get("created") === "1") {
+      setCreated(true);
+      window.history.replaceState(null, "", "/dashboard");
+    }
   }, []);
 
-  async function act(a: any, action: "pause" | "resume" | "fire") {
-    setError(null);
-    setNotice(null);
-    try {
-      // pause/resume must succeed on-chain before the DB is touched.
-      if (action === "pause" || action === "resume") {
-        const hash = await writeContractAsync({
-          address: PULSE_CONTRACT_ADDRESS,
-          abi: PULSE_ABI,
-          functionName: action,
-          args: [BigInt(a.onchainId)],
-        });
-        await publicClient!.waitForTransactionReceipt({ hash });
-      }
-      // Prove control of the automation's owner wallet for THIS exact action.
-      const timestamp = Date.now();
-      const signature = await signMessageAsync({
-        message: buildActionMessage(a.id, action, timestamp),
-      });
-      const res = await fetch("/api/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: "demo", automationId: a.id, action, signature, timestamp }),
-      });
-      const data = await res.json();
-      if (action === "fire") {
-        if (!data.ok) setError(data.reason ?? "Could not fire.");
-        else if (data.mock) setNotice(data.message);
-        else if (data.outcome === "rejected") setNotice(`The contract refused it: ${data.reason}`);
-        else setNotice("Sent. The contract accepted it.");
-      }
-      load();
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
+  const counts = {
+    active: automations.filter((a) => a.status === "active").length,
+    paused: automations.filter((a) => a.status === "paused").length,
+    ended: automations.filter((a) => a.status === "cancelled" || a.status === "expired").length,
+  };
 
   return (
-    <main className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Automations</h1>
-        <Link href="/" className="pill">+ New</Link>
+    <main>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="eyebrow">Dashboard</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-navy">Your automations</h1>
+          <p className="mt-2 text-slate-600">What each one can do, what it last did, and what the contract says right now.</p>
+        </div>
+        <Link href="/" className="btn-primary self-start sm:self-auto">New automation</Link>
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      {notice && <p className="text-sm text-neutral-600">{notice}</p>}
+      {created && (
+        <Alert tone="success" title="Automation activated" className="mt-6">
+          Its permission now exists on-chain. Nothing runs until its day and conditions are met.
+        </Alert>
+      )}
+      {actions.error && <Alert tone="danger" className="mt-6">{actions.error}</Alert>}
+      {actions.notice && <Alert tone="info" className="mt-6">{actions.notice}</Alert>}
 
-      {automations.length === 0 && (
-        <p className="text-sm text-neutral-500">No automations yet.</p>
+      {loading ? (
+        <div className="mt-8 grid gap-4 md:grid-cols-2" aria-label="Loading automations">
+          {[0, 1].map((i) => <div key={i} className="card h-64 animate-pulse" />)}
+        </div>
+      ) : !address ? (
+        <div className="mt-8">
+          <EmptyState title="Connect your wallet" action={<span className="text-sm text-slate-600">Use the button at the top right.</span>}>
+            Volo files your automations under your wallet address, so connect to see them.
+          </EmptyState>
+        </div>
+      ) : loadError ? (
+        <div className="mt-8">
+          <EmptyState
+            title="Could not load your automations"
+            action={<button className="btn-secondary" onClick={() => { setLoading(true); load(); }}>Try again</button>}
+          >
+            {loadError}
+          </EmptyState>
+        </div>
+      ) : automations.length === 0 ? (
+        <div className="mt-8">
+          <EmptyState title="No automations yet" action={<Link href="/" className="btn-primary">Describe your first automation</Link>}>
+            Describe what you want in plain English, review the rules and permissions, then approve it in your wallet.{" "}
+            <Link href="/welcome" className="font-semibold text-link underline">New here? See how it works.</Link>
+          </EmptyState>
+        </div>
+      ) : (
+        <>
+          <dl className="mt-6 grid grid-cols-3 gap-3 sm:max-w-md">
+            {[["Active", counts.active], ["Paused", counts.paused], ["Ended", counts.ended]].map(([label, n]) => (
+              <div key={label as string} className="rounded-xl border border-line bg-card px-4 py-3">
+                <dt className="text-xs font-medium text-muted">{label}</dt>
+                <dd className="text-2xl font-bold tabular-nums text-navy">{n}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className={automations.length === 1 ? "mt-6 max-w-2xl" : "mt-6 grid gap-4 md:grid-cols-2"}>
+            {automations.map((a) => (
+              <AutomationCard key={a.id} a={a} actions={actions} />
+            ))}
+          </div>
+        </>
+      )}
+    </main>
+  );
+}
+
+function AutomationCard({ a, actions }: { a: any; actions: ReturnType<typeof useAutomationActions> }) {
+  const { permission } = useOnchainPermission(a.onchainId);
+  const s = schedule(a);
+  const chain = permission?.status;
+  const status = chain ?? a.status;
+  const mismatch = chain && chain !== a.status ? chain : null;
+  const working = actions.busy && actions.busy.id === a.id ? actions.busy.action : null;
+  const syncAction = mismatch === "cancelled" ? "cancel" : mismatch === "paused" ? "pause" : mismatch === "active" ? "resume" : null;
+
+  return (
+    <article className="card flex flex-col">
+      <div className="flex items-start justify-between gap-3">
+        <h2 className="min-w-0 text-base font-semibold leading-snug text-navy">
+          <Link href={`/automation/${a.id}`} className="hover:text-link">{a.label}</Link>
+        </h2>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <StatusBadge status={status} />
+          <span className="text-[11px] text-muted">{chain ? "read from the contract" : "app record"}</span>
+        </div>
+      </div>
+
+      {mismatch && (
+        <Alert tone="warning" className="mt-3">
+          The app&apos;s record says <b>{a.status}</b>, but the contract says <b>{mismatch}</b>. The contract is what counts.
+          {syncAction && (
+            <button
+              className="mt-2 block font-semibold underline"
+              disabled={Boolean(working)}
+              onClick={() => actions.sync(a, syncAction)}
+            >
+              {working === "sync" ? "Updating…" : "Update the app's record"}
+            </button>
+          )}
+        </Alert>
       )}
 
-      <div className="space-y-3">
-        {automations.map((a) => {
-          const sch = schedule(a);
-          return (
-            <div key={a.id} className="card space-y-2">
-              <div className="flex items-center justify-between">
-                <Link href={`/automation/${a.id}`} className="font-medium">{a.label}</Link>
-                <span className="pill">{a.status}</span>
-              </div>
-              {sch ? (
-                <>
-                  <p className="text-xs text-neutral-500">
-                    Sends {USDC(a.amountBaseUnits)} USDC to {a.recipientLabel}
-                  </p>
-                  <p className="text-xs text-neutral-500">{sch.rule}</p>
-                  {a.status === "active" && (
-                    <p className="text-xs text-neutral-500">
-                      Next check: {sch.next}. It sends only if your balance condition holds that day.
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-amber-600">
-                  Created before schedules were stored. It will not run automatically.
-                </p>
-              )}
-              {a.lastExecution && (
-                <p className="text-xs text-neutral-500">
-                  Last: {a.lastExecution.status}{" "}
-                  {a.lastExecution.reason ?? a.lastExecution.error ?? a.lastExecution.txHash ?? ""}
-                </p>
-              )}
-              <div className="flex gap-2 pt-1">
-                {a.status === "active" && (
-                  <button className="btn-secondary" onClick={() => act(a, "pause")}>Pause</button>
-                )}
-                {a.status === "paused" && (
-                  <button className="btn-secondary" onClick={() => act(a, "resume")}>Resume</button>
-                )}
-                <button
-                  className="btn-secondary"
-                  title="Demo only: ignores the schedule and balance condition"
-                  onClick={() => act(a, "fire")}
-                >
-                  Run now (demo)
-                </button>
-              </div>
-            </div>
-          );
-        })}
+      <dl className="mt-3 text-sm">
+        <Row label="Sends">{a.amountBaseUnits ? `${USDC(a.amountBaseUnits)} USDC` : "—"} to {a.recipientLabel}</Row>
+        {s ? <Row label="Rule">{s.rule}</Row> : <Row label="Rule">Schedule data unavailable (older record)</Row>}
+        {s && status === "active" && <Row label="Next check">{s.next}</Row>}
+        {permission && (
+          <Row label="This week">
+            {USDC(permission.spentInWindow)} of {USDC(permission.maxPerWindow)} USDC used
+          </Row>
+        )}
+        <Row label="Last result">
+          {a.lastExecution ? (
+            <span className="inline-flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+              <StatusBadge status={a.lastExecution.status} />
+              <span className="text-xs text-muted">{formatDateTime(a.lastExecution.at)}</span>
+            </span>
+          ) : (
+            "Nothing has run yet"
+          )}
+        </Row>
+        {a.lastExecution && (a.lastExecution.reason || a.lastExecution.error) && (
+          <Row label="Detail">{a.lastExecution.reason ?? a.lastExecution.error}</Row>
+        )}
+        {a.lastExecution?.txHash && (
+          <Row label="Transaction"><ExplorerLink kind="tx" value={a.lastExecution.txHash} /></Row>
+        )}
+      </dl>
+
+      <div className="mt-auto flex flex-wrap gap-2 pt-4">
+        <Link href={`/automation/${a.id}`} className="btn-secondary">Details</Link>
+        {status === "active" && (
+          <button className="btn-secondary" disabled={Boolean(working)} onClick={() => actions.act(a, "pause")}>
+            {working === "pause" && <Spinner />}{working === "pause" ? "Pausing on-chain…" : "Pause"}
+          </button>
+        )}
+        {status === "paused" && (
+          <button className="btn-secondary" disabled={Boolean(working)} onClick={() => actions.act(a, "resume")}>
+            {working === "resume" && <Spinner />}{working === "resume" ? "Resuming on-chain…" : "Resume"}
+          </button>
+        )}
       </div>
-    </main>
+
+      {status === "active" && (
+        <details className="mt-3 text-xs text-slate-600">
+          <summary className="cursor-pointer font-medium text-muted">Demo tools</summary>
+          <p className="mt-2">
+            Submits a run right now instead of waiting for the worker. The contract still enforces the day, the
+            once-per-day limit and your conditions, and may refuse it.
+          </p>
+          <button className="btn-secondary mt-2 !py-1.5" disabled={Boolean(working)} onClick={() => actions.act(a, "fire")}>
+            {working === "fire" && <Spinner />}{working === "fire" ? "Submitting…" : "Run now (demo)"}
+          </button>
+        </details>
+      )}
+    </article>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-line py-2 last:border-0">
+      <dt className="shrink-0 text-muted">{label}</dt>
+      <dd className="min-w-0 break-words text-right font-medium text-navy">{children}</dd>
+    </div>
   );
 }

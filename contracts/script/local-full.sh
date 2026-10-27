@@ -58,7 +58,7 @@ ms(){ date +%s%3N; }   # unix milliseconds (GNU date), what the auth window expe
 signer_key(){ [ "$1" = "$OTHER" ] && echo $OTHER_KEY || echo $USER_KEY; }
 reg(){ # id owner day threshold [maxPerExec] [maxPerWindow] [clientTz]   (signed by `owner`'s key)
   local T=$(ms) SIG
-  SIG=$(cast wallet sign --private-key $(signer_key $2) "$(printf 'Pulse: register automation\nonchainId: %s\nowner: %s\ntimestamp: %s' "$1" "$2" "$T")")
+  SIG=$(cast wallet sign --private-key $(signer_key $2) "$(printf 'Volo: register automation\nonchainId: %s\nowner: %s\ntimestamp: %s' "$1" "$2" "$T")")
   curl -s -X POST localhost:3055/api/automations -H 'content-type: application/json' -d "{
    \"onchainId\":\"$1\",\"owner\":\"$2\",\"userId\":\"demo\",\"timezone\":\"${7:-UTC}\",\"signature\":\"$SIG\",\"timestamp\":$T,
    \"intent\":{\"trigger\":{\"type\":\"schedule\",\"frequency\":\"weekly\",\"day\":\"$3\"},
@@ -67,7 +67,7 @@ reg(){ # id owner day threshold [maxPerExec] [maxPerWindow] [clientTz]   (signed
     \"recipientId\":\"savings\",\"maxPerExecution\":\"${5:-10}\",\"maxPerWindow\":\"${6:-10}\",\"expiresAt\":\"$EXP_ISO\"}}"; }
 act(){ # automationId action   (signed by the automation owner = USER)
   local T=$(ms) SIG
-  SIG=$(cast wallet sign --private-key $USER_KEY "$(printf 'Pulse: %s automation\nid: %s\ntimestamp: %s' "$2" "$1" "$T")")
+  SIG=$(cast wallet sign --private-key $USER_KEY "$(printf 'Volo: %s automation\nid: %s\ntimestamp: %s' "$2" "$1" "$T")")
   curl -s -X POST localhost:3055/api/execute -H 'content-type: application/json' -d "{\"userId\":\"demo\",\"automationId\":\"$1\",\"action\":\"$2\",\"signature\":\"$SIG\",\"timestamp\":$T}"; }
 field(){ python3 -c "import sys,json;d=json.load(sys.stdin);print($1)" ; }
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  listAutomationsForUser,
+  getAutomationById,
   recordExecutionResult,
   setStatus,
   updateAutomation,
@@ -8,6 +8,7 @@ import {
 import { isValidTimeZone, localParts, markDone } from "../../../lib/scheduler";
 import { buildActionMessage, verifyAuth } from "../../../lib/auth";
 import { consumeOnce, sweepExpired } from "../../../lib/nonceGuard";
+import { rateLimited } from "../../../lib/guard";
 
 /**
  * Status changes (pause/resume/cancel) are recorded here AFTER the client has
@@ -31,16 +32,16 @@ import { consumeOnce, sweepExpired } from "../../../lib/nonceGuard";
  */
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { userId = "demo", automationId, action, signature, timestamp } = body as {
-    userId?: string;
+  const limited = rateLimited(req, "write");
+  if (limited) return limited;
+  const { automationId, action, signature, timestamp } = body as {
     automationId: string;
     action: "fire" | "pause" | "resume" | "cancel";
     signature?: `0x${string}`;
     timestamp?: number;
   };
 
-  const automations = await listAutomationsForUser(userId);
-  const automation = automations.find((a) => a.id === automationId);
+  const automation = typeof automationId === "string" ? await getAutomationById(automationId) : undefined;
   if (!automation) {
     return NextResponse.json({ ok: false, reason: "Automation not found." }, { status: 404 });
   }
@@ -48,8 +49,7 @@ export async function POST(req: NextRequest) {
   if (!signature || typeof timestamp !== "number") {
     return NextResponse.json({ ok: false, reason: "Missing signature or timestamp." }, { status: 401 });
   }
-  // Verified against the RECORD's owner, never against the unauthenticated `userId`
-  // string in the request body — that string is only a database lookup key here.
+  // Verified against the RECORD's owner: the caller proves they control the wallet that owns this automation.
   const auth = await verifyAuth({
     message: buildActionMessage(automationId, action, timestamp),
     signature,

@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+.next
+**/.next
+.git
+.env
+data
+**/data
+contracts
+*.patch
+*.zip
+*.log

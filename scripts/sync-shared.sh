@@ -6,7 +6,7 @@
 #   scripts/sync-shared.sh --check  fail (exit 1) if any copy has drifted
 set -euo pipefail
 cd "$(dirname "$0")/.."
-FILES=(schema policyEngine parser db abi chain scheduler auth nonceGuard)
+FILES=(schema policyEngine parser db abi chain scheduler auth nonceGuard recipients rateLimit)
 status=0
 for f in "${FILES[@]}"; do
   if [ "${1:-}" = "--check" ]; then

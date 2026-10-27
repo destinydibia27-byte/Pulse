@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getAddress, isAddress } from "viem";
 import {
   resolvePolicy,
   checkRule,
@@ -8,25 +9,42 @@ import {
 } from "../../../lib/policyEngine";
 import { readTokenBalance } from "../../../lib/balance";
 import { IntentSchema } from "../../../lib/schema";
-import { APPROVED_RECIPIENTS, USDC_ADDRESS } from "../../../lib/appConfig";
-import { DEMO_SAVINGS_FALLBACK } from "../../../lib/constants";
+import { approvedRecipientsFor, USDC_ADDRESS } from "../../../lib/appConfig";
+import { listAutomationsForUser } from "../../../lib/db";
+import { maxAutomationsPerOwner, rateLimited, userKey } from "../../../lib/guard";
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  const limited = rateLimited(req, "policyCheck");
+  if (limited) return limited;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body.owner !== "string" || !isAddress(body.owner)) {
+    return NextResponse.json({ ok: false, reason: "Connect your wallet first." }, { status: 400 });
+  }
+  const owner = getAddress(body.owner);
   const parsedIntent = IntentSchema.safeParse(body.intent);
   if (!parsedIntent.success) {
     return NextResponse.json({ ok: false, reason: "Invalid intent payload." }, { status: 400 });
   }
 
-  const userId = body.userId ?? "demo";
+  // The user is the wallet. The client cannot name a different user.
+  const userId = userKey(owner);
 
   try {
-    const policy = resolvePolicy(userId, parsedIntent.data, USDC_ADDRESS, APPROVED_RECIPIENTS);
+    // Checked here, BEFORE the person signs anything on-chain, so a refusal never leaves an
+    // on-chain permission that the app then declines to register.
+    const live = (await listAutomationsForUser(userId)).filter((a) => a.status === "active" || a.status === "paused").length;
+    if (live >= maxAutomationsPerOwner()) {
+      return NextResponse.json(
+        { ok: false, reason: `You already have ${live} automations, the most this testnet allows. Cancel one on the Dashboard first.` },
+        { status: 422 }
+      );
+    }
+    const policy = resolvePolicy(userId, parsedIntent.data, USDC_ADDRESS, await approvedRecipientsFor(userId));
 
     // "Check rule": well-formedness + a read of the balance RIGHT NOW.
     // Explicitly NOT a prediction of state at the future trigger time.
     const threshold = toBaseUnits(parsedIntent.data.condition.balance);
-    const balanceRead = await readTokenBalance(body.owner, policy.asset);
+    const balanceRead = await readTokenBalance(owner, policy.asset);
     const result = checkRule(
       policy,
       balanceRead.status === "checked" ? balanceRead.balance : null,
@@ -39,8 +57,6 @@ export async function POST(req: NextRequest) {
       policy: {
         asset: policy.asset,
         recipient: policy.recipient,
-        // True when no DEMO_SAVINGS_ADDRESS is configured: funds would go to a public address anyone can spend from.
-        recipientIsPublicDefault: policy.recipient.toLowerCase() === DEMO_SAVINGS_FALLBACK.toLowerCase(),
         amount: policy.amount.toString(),
         maxPerExecution: policy.maxPerExecution.toString(),
         maxPerWindow: policy.maxPerWindow.toString(),

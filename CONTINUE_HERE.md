@@ -101,6 +101,44 @@ trusting a real feed, check its `description()`, `decimals()` and heartbeat on A
 Deploying v2 means a new contract address (update both address lines in `.env`); automations
 created on the old contract stay on the old contract.
 
+## Frontend redesign: Volo branding and interface
+
+New design system (brand tokens in `tailwind.config.ts`, self-hosted Inter via `@fontsource-variable/inter`,
+shared components in `app/components/ui.tsx`), a new **Activity** page, and rebuilt Automate, Review,
+Dashboard and Automation pages. All existing flows are preserved: parse, review, approve, register,
+pause, resume, cancel, run-now. The logo mark is an SVG recreation of the supplied image (98.8% pixel
+overlap) and the original image is the favicon and app icon.
+
+Real data only, and where the old UI could mislead, it now tells the truth:
+- **Status is read from the contract** and shown next to the app's record. If they disagree, a banner
+  explains it and offers "Update the app's record" (signed, no transaction). This repairs the earlier
+  "paused vs cancelled" gap.
+- **Execution history is real but only from now on.** `db.ts` keeps each result (newest 50, tested), and
+  the record API returns it. Older records show only their latest result.
+- **Spending approval is visible and revocable.** The USDC approval equals the weekly cap and is used up
+  by each run, so it needs renewing. The detail page shows what remains, warns when it is below one run,
+  and can revoke it (that affects all of the wallet's automations, and the dialog says so).
+- **The review screen lists what is and is not protected**, and warns when the text was read by the
+  offline fallback parser, which cannot tell "above" from "below".
+- Wrong network now offers a switch button instead of failing later.
+
+Added after the first browser run: **Renew approval** on the detail page (the same amount the review step asks
+for, your weekly cap), **Create a changed copy** (the contract cannot edit a permission, so the rule is carried back
+to the form as plain text to adjust), wallet signature prompts that now start with "Volo:" (the signer and verifier
+share `lib/auth.ts`; `local-full.sh` was updated to match), and wagmi `ssr: true`, which removed React hydration
+errors (#418 / #423) that appeared whenever a saved wallet connection was restored.
+
+Not changed, on purpose: no ZeroDev integration exists in this code, so the UI never claims one. Internal names
+(`PulseAutomation`, env var names, the `pulse.pendingIntent` storage key, package names) still say Pulse; none of
+them is shown in the app's interface.
+
+Verified in a real headless browser (Chromium) against a local Anvil chain with the real contract and a stand-in
+wallet: 27 checks covering validation, connect, review, rule check, approve, activate, run, pause, resume, renew,
+revoke, cancel (the contract itself reports status 2), the changed-copy prefill, the text the wallet is asked to
+sign, the mobile menu, no horizontal scrolling, and zero browser errors. Not covered: a real MetaMask (its popups
+and fee estimation) and the real Arbitrum Sepolia RPC. The browser test also needs a Multicall3 stand-in, because a
+bare Anvil chain has none and the app batches its reads through it.
+
 ## Open items (not fixed, decide before deploying)
 
 1. **Still unaudited, and never run against a live chain.** Expect to debug the first
