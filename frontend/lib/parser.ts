@@ -29,7 +29,7 @@ Output ONLY this JSON object (no prose, no markdown fences):
 Rules:
 - Only weekly schedules and USDC transfers are supported. For anything else (daily, monthly, swaps, other tokens, other actions) respond {"error": "unsupported: <short reason>"}.
 - trigger.day is the weekday the user named ("every Friday" -> "friday"). If no weekday is named, respond {"error": "Which day of the week should it run?"}.
-- condition.operator: "above", "over", "more than", "greater than" -> ">". "at least", "or more", "no less than" -> ">=". "below", "under", "less than", "fewer than" -> "<". "at most", "no more than", "or less" -> "<=". "exactly", "equal to" -> "==". If the user states no balance condition, respond {"error": "Add a condition on your USDC balance, for example 'when my balance is above $100'."}.
+- condition.operator: "above", "over", "more than", "greater than" -> ">". "at least", "or more", "no less than" -> ">=". "below", "under", "less than", "fewer than" -> "<". "at most", "no more than", "or less" -> "<=". "exactly", "equal to" -> "==". If the user states no balance condition, respond {"error": "What balance condition should it have, for example 'when my balance is above $100'?"}.
 - Numbers are plain digits with no "$" and no commas ("$1,000" -> "1000"). Copy numbers EXACTLY as the user wrote them. Never round, convert, add, or compute. If an amount is written in words ("ten dollars"), respond {"error": "Please write amounts as numbers, for example $10."}.
 - action.amount is what is sent each run. maxPerExecution equals action.amount unless the user states a different per-run limit. maxPerWindow is a weekly limit if the user states one ("up to $50 a week"), otherwise the same as action.amount.
 - recipientId is the destination as the user named it, lower case, without "my", "the", "wallet" or "account" ("to my Savings wallet" -> "savings"). NEVER output a wallet address. If the user gives an address (0x...), respond {"error": "Name a saved recipient such as 'savings'. Addresses are saved in Settings."}.
@@ -57,6 +57,11 @@ export interface ParseError {
   reason: string;
   /** Set when the AI service itself was unavailable (as opposed to the text being unreadable). */
   code?: "llm_unavailable";
+  /**
+   * True when `reason` is a question that a short answer can complete ("Which day should it run?").
+   * The chat joins that answer onto the original sentence instead of starting over.
+   */
+  followUp?: boolean;
 }
 
 /** Thrown by a model adapter with a message that is safe to show to the person. */
@@ -91,7 +96,8 @@ export async function parseUserIntent(
   }
 
   if (isModelError(parsedJson)) {
-    return { ok: false, reason: parsedJson.error.slice(0, 300) };
+    const reason = parsedJson.error.slice(0, 300);
+    return { ok: false, reason, followUp: reason.trim().endsWith("?") };
   }
 
   let intent: Intent;
@@ -103,7 +109,7 @@ export async function parseUserIntent(
   }
 
   const problem = checkGrounding(userText, intent);
-  if (problem) return { ok: false, reason: problem };
+  if (problem) return { ok: false, reason: problem, followUp: problem.endsWith("?") };
 
   return { ok: true, intent, explanation: explain(intent) };
 }
@@ -187,14 +193,14 @@ export function checkGrounding(userText: string, intent: Intent): string | null 
 
   const day = intent.trigger.day;
   if (!DAYS.includes(day) || !new RegExp(`\\b${day.slice(0, 3)}[a-z]*`, "i").test(userText)) {
-    return "I could not find the day of the week in your message. Say which day it should run, for example \"every Friday\".";
+    return "I could not find a day of the week in your message. Which day should it run?";
   }
 
   if (/0x[0-9a-fA-F]{4,}/.test(intent.recipientId)) return NO_ADDRESSES; // a label must never look like an address
   const label = intent.recipientId.toLowerCase().trim();
   const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (!label || !new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`, "i").test(userText)) {
-    return `I could not find the recipient "${intent.recipientId}" in your message. Name where the money goes, for example "to my savings wallet".`;
+    return `I could not find "${intent.recipientId}" in your message. Where should the money go, for example "to my savings wallet"?`;
   }
   return null;
 }
