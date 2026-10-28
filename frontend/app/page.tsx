@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Spinner } from "./components/ui";
+import { combineFollowUp } from "../lib/followUp";
 
-const MAX_LEN = 280;
+const MAX_LEN = 400;
 const MIN_LEN = 12;
 const CHAT_KEY = "volo.chat";
 const PENDING_KEY = "pulse.pendingIntent"; // what the Review page reads
@@ -19,6 +20,7 @@ const EXAMPLES = [
 type Msg =
   | { id: string; role: "user"; text: string }
   | { id: string; role: "assistant"; kind: "error"; text: string }
+  | { id: string; role: "assistant"; kind: "question"; text: string; source: string }
   | { id: string; role: "assistant"; kind: "summary"; explanation: string; offline: boolean; source: string };
 
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -82,16 +84,21 @@ export default function Home() {
   }, [msgs, thinking]);
 
   const started = msgs.some((m) => m.role === "user");
+  // When Volo's last message is a question, a short answer finishes the original sentence.
+  const lastMsg = msgs[msgs.length - 1];
+  const pendingSource = lastMsg && lastMsg.role === "assistant" && lastMsg.kind === "question" ? lastMsg.source : null;
   const lastSummaryId = [...msgs].reverse().find((m) => m.role === "assistant" && m.kind === "summary")?.id;
 
   async function send() {
     const t = text.trim();
     if (thinking || !t) return;
-    if (t.length < MIN_LEN) {
+    // A short answer to a question is fine; only a brand-new request needs enough detail to read.
+    if (!pendingSource && t.length < MIN_LEN) {
       setHint("Add a few more details so Volo can read it: the day, the amount, where it goes, and the condition.");
       return;
     }
     setHint(null);
+    const payload = combineFollowUp(pendingSource, t);
     setMsgs((m) => [...m, { id: uid(), role: "user", text: t }]);
     setText("");
     setThinking(true);
@@ -99,16 +106,19 @@ export default function Home() {
       const res = await fetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: t }),
+        body: JSON.stringify({ text: payload }),
       });
       const data = await res.json();
-      if (!data.ok) {
+      if (!data.ok && data.followUp) {
+        // Volo is asking for one missing detail: show it as a normal message and remember what it was building.
+        setMsgs((m) => [...m, { id: uid(), role: "assistant", kind: "question", text: String(data.reason), source: payload }]);
+      } else if (!data.ok) {
         setMsgs((m) => [...m, { id: uid(), role: "assistant", kind: "error", text: data.reason ?? "I could not understand that request." }]);
       } else {
         sessionStorage.setItem(PENDING_KEY, JSON.stringify(data));
         setMsgs((m) => [
           ...m,
-          { id: uid(), role: "assistant", kind: "summary", explanation: String(data.explanation ?? ""), offline: data.parser === "offline", source: t },
+          { id: uid(), role: "assistant", kind: "summary", explanation: String(data.explanation ?? ""), offline: data.parser === "offline", source: payload },
         ]);
       }
     } catch (e) {
@@ -166,6 +176,11 @@ export default function Home() {
         {msgs.map((m) =>
           m.role === "user" ? (
             <Bubble key={m.id} from="user">{m.text}</Bubble>
+          ) : m.kind === "question" ? (
+            <Bubble key={m.id} from="assistant">
+              {m.text}
+              {m.id === lastMsg?.id && <span className="mt-1 block text-xs text-muted">Reply with just the missing detail.</span>}
+            </Bubble>
           ) : m.kind === "error" ? (
             <Bubble key={m.id} from="assistant" tone="error">
               <span className="font-semibold">I couldn&apos;t build that.</span>
@@ -228,7 +243,7 @@ export default function Home() {
                 // Enter sends; Shift+Enter adds a line. Never send mid-composition (IME keyboards).
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
               }}
-              placeholder="Describe your automation…"
+              placeholder={pendingSource ? "Type your answer…" : "Describe your automation…"}
               className="max-h-36 min-h-[1.75rem] w-full resize-none bg-transparent py-0.5 text-[15px] leading-relaxed text-navy placeholder:text-slate-400 focus:outline-none"
             />
             {text.length >= 200 && (

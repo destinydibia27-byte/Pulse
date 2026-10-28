@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseUserIntent, checkGrounding, buildSystemPrompt, LlmUnavailableError } from "../src/parser";
+import { combineFollowUp } from "../src/followUp";
 
 const NOW = new Date("2026-10-27T10:00:00Z");
 
@@ -94,7 +95,8 @@ test("grounding: a weekday the user never said is refused", async () => {
 test("grounding: a recipient the user never named is refused", async () => {
   const r = await parseUserIntent(TEXT, fake(reply({ recipientId: "landlord" })), NOW);
   assert.equal(r.ok, false);
-  assert.match((r as any).reason, /recipient "landlord"/);
+  assert.match((r as any).reason, /"landlord"/);
+  assert.equal((r as any).followUp, true);
 });
 
 test("grounding: amounts spelled out in words ask for digits instead of guessing", async () => {
@@ -152,7 +154,7 @@ test("text that tries to steer the model cannot add fields: unknown keys are dro
 
 test("the model's own error message is passed on, shortened", async () => {
   const r = await parseUserIntent("Swap my ETH for USDC every day", fake(JSON.stringify({ error: "unsupported: only weekly USDC transfers are supported" })), NOW);
-  assert.deepEqual(r, { ok: false, reason: "unsupported: only weekly USDC transfers are supported" });
+  assert.deepEqual(r, { ok: false, reason: "unsupported: only weekly USDC transfers are supported", followUp: false });
 });
 
 test("invalid JSON and wrong shapes both give one friendly message, with no internals", async () => {
@@ -201,4 +203,35 @@ test("a pasted wallet address is refused before the model is even called", async
   assert.equal(r.ok, false);
   assert.match((r as any).reason, /saved in Settings/);
   assert.equal(called, false);
+});
+
+// ------------------------------------------------------------------ follow-up questions
+test("a missing weekday is a follow-up question, not a dead end", async () => {
+  const r = await parseUserIntent("Send $10 to savings when my balance is above $100", fake(reply()), NOW);
+  assert.equal(r.ok, false);
+  assert.equal((r as any).followUp, true);
+  assert.ok((r as any).reason.trim().endsWith("?"));
+});
+
+test("a question from the model itself is a follow-up", async () => {
+  const r = await parseUserIntent("Send $10 to savings every Friday", fake(JSON.stringify({ error: "What balance condition should it have?" })), NOW);
+  assert.deepEqual(r, { ok: false, reason: "What balance condition should it have?", followUp: true });
+});
+
+test("refusals that are not questions are not follow-ups", async () => {
+  const unsupported = await parseUserIntent("Swap ETH every day", fake(JSON.stringify({ error: "unsupported: only weekly USDC transfers are supported" })), NOW);
+  assert.equal((unsupported as any).followUp, false);
+  const words = await parseUserIntent("Every Friday send ten dollars to my savings wallet if my balance is above one hundred", fake(reply()), NOW);
+  assert.equal((words as any).followUp, false);
+  const swapped = await parseUserIntent(TEXT, fake(reply({ condition: { asset: "USDC", operator: ">", balance: "10" } })), NOW);
+  assert.equal((swapped as any).followUp, false);
+});
+
+test("an answer to the question completes the original sentence end to end", async () => {
+  const first = "Send $10 to savings when my balance is above $100";
+  const r1 = await parseUserIntent(first, fake(reply()), NOW);
+  assert.equal(r1.ok, false);
+  const joined = combineFollowUp(first, "Friday");
+  const r2 = await parseUserIntent(joined, fake(reply()), NOW);
+  assert.equal(r2.ok, true);
 });
