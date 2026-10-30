@@ -1,4 +1,5 @@
 import { parseIntentStrict, Intent, IntentValidationError } from "./schema";
+import { numbersWithPositions } from "./numbers";
 
 /**
  * The AI's entire job: free text -> JSON matching IntentSchema.
@@ -30,7 +31,7 @@ Rules:
 - Only weekly schedules and USDC transfers are supported. For anything else (daily, monthly, swaps, other tokens, other actions) respond {"error": "unsupported: <short reason>"}.
 - trigger.day is the weekday the user named ("every Friday" -> "friday"). If no weekday is named, respond {"error": "Which day of the week should it run?"}.
 - condition.operator: "above", "over", "more than", "greater than" -> ">". "at least", "or more", "no less than" -> ">=". "below", "under", "less than", "fewer than" -> "<". "at most", "no more than", "or less" -> "<=". "exactly", "equal to" -> "==". If the user states no balance condition, respond {"error": "What balance condition should it have, for example 'when my balance is above $100'?"}.
-- Numbers are plain digits with no "$" and no commas ("$1,000" -> "1000"). Copy numbers EXACTLY as the user wrote them. Never round, convert, add, or compute. If an amount is written in words ("ten dollars"), respond {"error": "Please write amounts as numbers, for example $10."}.
+- Numbers are plain digits with no "$" and no commas ("$1,000" -> "1000"). Copy numbers EXACTLY as the user meant them. Convert words and abbreviations to plain digits: "ten" -> "10", "a hundred" -> "100", "twenty-five" -> "25", "$1k" -> "1000", "2.5k" -> "2500". Never round, add, or compute anything else.
 - action.amount is what is sent each run. maxPerExecution equals action.amount unless the user states a different per-run limit. maxPerWindow is a weekly limit if the user states one ("up to $50 a week"), otherwise the same as action.amount.
 - recipientId is the destination as the user named it, lower case, without "my", "the", "wallet" or "account" ("to my Savings wallet" -> "savings"). NEVER output a wallet address. If the user gives an address (0x...), respond {"error": "Name a saved recipient such as 'savings'. Addresses are saved in Settings."}.
 - expiresAt: one year after today unless the user states a different end date. Today's date is ${today}.
@@ -123,9 +124,9 @@ const UNREADABLE =
 
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
-/** All numbers written in the text, as numeric values ("$1,000.50" -> 1000.5). */
+/** All numbers the person wrote (digits, "$1k", "ten", "a hundred"...), as numeric values. */
 function numbersIn(text: string): number[] {
-  return (text.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((s) => Number(s.replace(/,/g, ""))).filter(Number.isFinite);
+  return numbersWithPositions(text).map((n) => n.value);
 }
 
 type Role = "amount" | "condition" | "unknown";
@@ -139,12 +140,8 @@ const CONDITION_CUES = /\b(balance|have|has|above|over|below|under|at least|at m
  */
 function rolesOf(text: string): Map<number, Set<Role>> {
   const out = new Map<number, Set<Role>>();
-  const re = /\d[\d,]*(?:\.\d+)?/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    const value = Number(m[0].replace(/,/g, ""));
-    if (!Number.isFinite(value)) continue;
-    const before = text.slice(Math.max(0, m.index - 60), m.index);
+  for (const { value, index } of numbersWithPositions(text)) {
+    const before = text.slice(Math.max(0, index - 60), index);
     const lastIndex = (rx: RegExp) => { let last = -1, x: RegExpExecArray | null; rx.lastIndex = 0; while ((x = rx.exec(before))) last = x.index; return last; };
     const a = lastIndex(ACTION_CUES), c = lastIndex(CONDITION_CUES);
     const role: Role = a < 0 && c < 0 ? "unknown" : a > c ? "amount" : "condition";
@@ -167,15 +164,15 @@ function rolesOf(text: string): Map<number, Set<Role>> {
  */
 export function checkGrounding(userText: string, intent: Intent): string | null {
   const nums = numbersIn(userText);
-  if (nums.length === 0) return "Please write the amounts as numbers, for example $10.";
+  if (nums.length === 0) return "How much should it send, and at what balance (for example \"send $10 when my balance is above $100\")?";
   const typed = (v: string) => nums.some((n) => n === Number(v));
   const amount = Number(intent.action.amount);
 
   if (!typed(intent.action.amount)) {
-    return `I read the amount as ${intent.action.amount} USDC, but I could not find that number in your message. Please write it as a number, for example $10.`;
+    return `I read the amount as ${intent.action.amount} USDC, but I could not find that number in your message. How much should it send?`;
   }
   if (!typed(intent.condition.balance)) {
-    return `I read the balance condition as ${intent.condition.balance} USDC, but I could not find that number in your message. Please state it, for example "when my balance is above $100".`;
+    return `I read the balance condition as ${intent.condition.balance} USDC, but I could not find that number in your message. At what balance should it send, for example "when my balance is above $100"?`;
   }
   const roles = rolesOf(userText);
   const onlyAs = (v: string, role: Role) => {
