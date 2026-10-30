@@ -99,10 +99,39 @@ test("grounding: a recipient the user never named is refused", async () => {
   assert.equal((r as any).followUp, true);
 });
 
-test("grounding: amounts spelled out in words ask for digits instead of guessing", async () => {
-  const r = await parseUserIntent("Every Friday send ten dollars to my savings wallet if my balance is above one hundred", fake(reply()), NOW);
+test("understanding: amounts written in words are read, not bounced back", async () => {
+  const r = await parseUserIntent("Every Friday send ten dollars to my savings wallet if my balance is above a hundred", fake(reply()), NOW);
+  assert.equal(r.ok, true);
+});
+
+test("understanding: '$1k' and '$5k' are read as 1000 and 5000", async () => {
+  const r = await parseUserIntent(
+    "On Mondays, move $1k to savings if I have more than $5k",
+    fake(reply({ trigger: { type: "schedule", frequency: "weekly", day: "monday" }, condition: { asset: "USDC", operator: ">", balance: "5000" }, action: { type: "transfer", asset: "USDC", amount: "1000" }, maxPerExecution: "1000", maxPerWindow: "1000" })),
+    NOW
+  );
+  assert.equal(r.ok, true);
+});
+
+test("understanding: a made-up figure is still refused when the person wrote it in words", async () => {
+  const r = await parseUserIntent("Every Friday send ten dollars to my savings wallet if my balance is above a hundred",
+    fake(reply({ action: { type: "transfer", asset: "USDC", amount: "55" }, maxPerExecution: "55", maxPerWindow: "55" })), NOW);
   assert.equal(r.ok, false);
-  assert.match((r as any).reason, /write the amounts as numbers/);
+  assert.match((r as any).reason, /amount as 55 USDC/);
+});
+
+test("understanding: words keep their roles (a swapped amount and balance is still refused)", async () => {
+  const text = "If my balance is above one hundred, send ten to savings every Friday";
+  assert.equal((await parseUserIntent(text, fake(reply()), NOW)).ok, true);
+  const swapped = reply({ condition: { asset: "USDC", operator: ">", balance: "10" }, action: { type: "transfer", asset: "USDC", amount: "100" }, maxPerExecution: "100", maxPerWindow: "100" });
+  assert.equal((await parseUserIntent(text, fake(swapped), NOW)).ok, false);
+});
+
+test("understanding: a message with no figures at all becomes a question, not an error", async () => {
+  const r = await parseUserIntent("Every Friday send some money to savings when I have a lot", fake(reply()), NOW);
+  assert.equal(r.ok, false);
+  assert.equal((r as any).followUp, true);
+  assert.match((r as any).reason, /How much should it send/);
 });
 
 test("grounding: thousands separators and a stated weekly cap are accepted", async () => {
@@ -221,8 +250,8 @@ test("a question from the model itself is a follow-up", async () => {
 test("refusals that are not questions are not follow-ups", async () => {
   const unsupported = await parseUserIntent("Swap ETH every day", fake(JSON.stringify({ error: "unsupported: only weekly USDC transfers are supported" })), NOW);
   assert.equal((unsupported as any).followUp, false);
-  const words = await parseUserIntent("Every Friday send ten dollars to my savings wallet if my balance is above one hundred", fake(reply()), NOW);
-  assert.equal((words as any).followUp, false);
+  const address = await parseUserIntent("Every Friday send $10 to 0x01aD5f069a436f67fDCED12babE12CD9e2C19BB1 when my balance is above $100", fake(reply()), NOW);
+  assert.equal((address as any).followUp, undefined);
   const swapped = await parseUserIntent(TEXT, fake(reply({ condition: { asset: "USDC", operator: ">", balance: "10" } })), NOW);
   assert.equal((swapped as any).followUp, false);
 });
