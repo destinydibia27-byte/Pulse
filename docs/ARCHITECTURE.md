@@ -85,8 +85,19 @@ Secrets are server-side only. Anything starting with `NEXT_PUBLIC_` is visible i
 | `ENABLE_DEMO_FIRE` | no | `true` shows a "run now" button. Keep `false` on a public site |
 | `POLL_INTERVAL_MS` | no | Worker poll period, default 60000 |
 | `NEXT_PUBLIC_USDC_ADDRESS` | no | Override the test USDC address |
+| `NEXT_PUBLIC_ZERODEV_PROJECT_ID` | no | Turns on gasless smart accounts (see below). Baked in at build time, so rebuild after changing it |
 
 (`PULSE_` is the old project name. The names are kept so existing deployments keep working.)
+
+## Accounts: wallet or smart account
+
+A person is the address that owns their automations and recipients. By default that is their **wallet**. When `NEXT_PUBLIC_ZERODEV_PROJECT_ID` is set, Settings offers a second choice, a **gasless smart account** (a ZeroDev Kernel account the wallet controls). The two are different addresses, so each has its own recipients and automations. The USDC to be sent must be in the smart account.
+
+- `frontend/app/components/useActiveAccount.ts` is the one place that answers "who am I and how do I sign". Every page asks it, so the identity, the signature and the list of automations always agree. The default is the `DEFAULT_MODE` constant in that file.
+- `frontend/lib/zerodev.ts` builds the smart account and sends sponsored transactions. The SDK is loaded only when it is used.
+- A smart account signs with ERC-1271, which only the chain can check. The server verifies those signatures through `frontend/lib/smartVerify.ts` (fails closed). Plain wallet signatures never leave the app.
+- Gas is paid by the project's ZeroDev Gas Policy, which must allow the USDC and Volo contracts. Without one nothing is sponsored.
+- If the smart account cannot be prepared, `AccountGate` explains it and points to Settings, where the person can switch back to their wallet.
 
 ## Checking your work
 

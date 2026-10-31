@@ -7,9 +7,10 @@ import { recoverMessageAddress, type Address } from "viem";
  * right now" — it does NOT by itself prove they own the on-chain permission; the
  * caller must separately check the recovered address against the record's owner.
  *
- * Known limitation: this only verifies EOA (regular wallet) signatures. A smart
- * contract wallet (Safe, etc.) as the automation owner would need ERC-1271
- * verification instead, which requires an RPC call. Not implemented here.
+ * Smart-account owners (for example a ZeroDev Kernel account) cannot be checked by
+ * local recovery: their signatures are validated by the account contract itself
+ * (ERC-1271), which needs an RPC call. The caller supplies that check as
+ * `verifySmartAccount`; without it only regular 65-byte wallet signatures pass.
  */
 
 export const AUTH_WINDOW_MS = 5 * 60 * 1000;
@@ -36,11 +37,20 @@ export function buildRecipientRemoveMessage(owner: string, label: string, timest
 
 export type AuthResult = { ok: true; signer: Address } | { ok: false; reason: string };
 
+/** Asks the owner's account contract whether `signature` is valid for `message` (ERC-1271). */
+export type SmartAccountVerifier = (args: {
+  address: Address;
+  message: string;
+  signature: `0x${string}`;
+}) => Promise<boolean>;
+
 export interface AuthInput {
   message: string;
   signature: `0x${string}`;
   expectedSigner: Address;
   timestamp: number;
+  /** Optional ERC-1271 check, used only when the signature is not a plain wallet signature of the owner. */
+  verifySmartAccount?: SmartAccountVerifier;
 }
 
 /**
@@ -49,25 +59,41 @@ export interface AuthInput {
  * without it, anyone who ever saw a valid signed request could replay it forever.
  */
 export async function verifyAuth(input: AuthInput, now: number = Date.now()): Promise<AuthResult> {
-  const { message, signature, expectedSigner, timestamp } = input;
+  const { message, signature, expectedSigner, timestamp, verifySmartAccount } = input;
 
   if (!Number.isFinite(timestamp)) return { ok: false, reason: "Missing or invalid timestamp." };
   if (Math.abs(now - timestamp) > AUTH_WINDOW_MS) {
     return { ok: false, reason: "Signature has expired. Please try again." };
   }
-  if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) {
+  // A plain wallet signature is exactly 65 bytes. Smart-account signatures are longer (or
+  // differently framed) but never shorter than that, and are bounded here to keep requests small.
+  if (!/^0x(?:[0-9a-fA-F]{2}){65,4096}$/.test(signature)) {
     return { ok: false, reason: "Malformed signature." };
   }
+  const isPlainSignature = signature.length === 132;
 
-  let recovered: Address;
-  try {
-    recovered = await recoverMessageAddress({ message, signature });
-  } catch {
-    return { ok: false, reason: "Could not recover a signer from that signature." };
+  let recoverFailed = false;
+  if (isPlainSignature) {
+    try {
+      const recovered = await recoverMessageAddress({ message, signature });
+      if (recovered.toLowerCase() === expectedSigner.toLowerCase()) return { ok: true, signer: recovered };
+    } catch {
+      recoverFailed = true;
+    }
   }
 
-  if (recovered.toLowerCase() !== expectedSigner.toLowerCase()) {
-    return { ok: false, reason: "Signature was not made by the expected wallet." };
+  // Not signed directly by the owner's key. If the owner is a smart account, ask the account itself.
+  if (verifySmartAccount) {
+    let valid = false;
+    try {
+      valid = await verifySmartAccount({ address: expectedSigner, message, signature });
+    } catch {
+      valid = false; // an RPC failure must fail closed, never open
+    }
+    if (valid) return { ok: true, signer: expectedSigner };
   }
-  return { ok: true, signer: recovered };
+
+  if (!isPlainSignature) return { ok: false, reason: "Signature was not made by the expected wallet." };
+  if (recoverFailed) return { ok: false, reason: "Could not recover a signer from that signature." };
+  return { ok: false, reason: "Signature was not made by the expected wallet." };
 }

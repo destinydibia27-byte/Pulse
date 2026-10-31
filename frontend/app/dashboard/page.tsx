@@ -9,6 +9,7 @@ import { Alert, EmptyState, ExplorerLink, Spinner, StatusBadge } from "../compon
 import { useAutomationActions } from "../components/useAutomationActions";
 import { useOnchainPermission } from "../components/useOnchain";
 import { useOwnerAutomations } from "../components/useOwnerAutomations";
+import { AccountGate } from "../components/AccountGate";
 
 const USDC = (base: string | bigint) => formatUnits(BigInt(base), 6);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -80,9 +81,7 @@ export default function Dashboard() {
         </div>
       ) : !address ? (
         <div className="mt-8">
-          <EmptyState title="Connect your wallet" action={<span className="text-sm text-slate-600">Use the button at the top right.</span>}>
-            Volo files your automations under your wallet address, so connect to see them.
-          </EmptyState>
+          <AccountGate what="your automations" />
         </div>
       ) : loadError ? (
         <div className="mt-8">

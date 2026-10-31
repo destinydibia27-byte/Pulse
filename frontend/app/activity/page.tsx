@@ -6,6 +6,7 @@ import { contractEventsUrl, formatDateTime } from "../../lib/explorer";
 import { PULSE_CONTRACT_ADDRESS } from "../../lib/wagmiConfig";
 import { Alert, EmptyState, ExplorerLink, StatusBadge } from "../components/ui";
 import { useOwnerAutomations } from "../components/useOwnerAutomations";
+import { AccountGate } from "../components/AccountGate";
 
 type Entry = {
   key: string; automationId: string; label: string;
@@ -75,9 +76,7 @@ export default function Activity() {
 
       <div className="mt-4">
         {!address && !loading ? (
-          <EmptyState title="Connect your wallet" action={<span className="text-sm text-slate-600">Use the button at the top right.</span>}>
-            Volo files your automations under your wallet address, so connect to see them.
-          </EmptyState>
+          <AccountGate what="your activity" />
         ) : error ? (
           <EmptyState title="Could not load activity" action={<button className="btn-secondary" onClick={load}>Try again</button>}>
             {error}

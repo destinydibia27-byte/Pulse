@@ -10,22 +10,28 @@ import {
   usePublicClient,
   useSignMessage,
 } from "wagmi";
-import { decodeEventLog, formatUnits } from "viem";
+import { decodeEventLog, encodeFunctionData, erc20Abi, formatUnits, parseUnits } from "viem";
 import { PULSE_ABI, ERC20_ABI } from "../../lib/abi";
 import { PULSE_CONTRACT_ADDRESS } from "../../lib/wagmiConfig";
 import { buildRegisterMessage } from "../../lib/auth";
 import { shortAddr } from "../../lib/explorer";
 import { Alert, DetailRow, ExplorerLink, Spinner } from "../components/ui";
+import { useActiveAccount } from "../components/useActiveAccount";
 
 type Phase = "checked" | "approving-usdc" | "creating-permission" | "recording" | "done";
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default function Review() {
   const router = useRouter();
-  const { address, isConnected } = useAccount();
+  const active = useActiveAccount();
+  const { eoa: address, connected: isConnected, smart, isSmart: useSmart } = active;
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
-  const { signMessageAsync } = useSignMessage();
+  // "smart" = a gasless ZeroDev smart account owns the permission and holds the USDC;
+  // "wallet" = the connected wallet does. The choice lives in Settings (see useActiveAccount).
+  const ownerAddr = active.address as `0x${string}` | undefined;
+  const [fundAmount, setFundAmount] = useState("");
+  const [funding, setFunding] = useState(false);
 
   const [pending, setPending] = useState<any>(null);
   const [checkResult, setCheckResult] = useState<any>(null);
@@ -55,8 +61,16 @@ export default function Review() {
     address: asset,
     abi: ERC20_ABI,
     functionName: "allowance",
-    args: address ? [address, PULSE_CONTRACT_ADDRESS] : undefined,
-    query: { enabled: Boolean(address && checkResult) },
+    args: ownerAddr ? [ownerAddr, PULSE_CONTRACT_ADDRESS] : undefined,
+    query: { enabled: Boolean(ownerAddr && checkResult) },
+  });
+
+  const { data: smartBalance, refetch: refetchSmartBalance } = useReadContract({
+    address: asset,
+    abi: ERC20_ABI,
+    functionName: "balanceOf",
+    args: smart.address ? [smart.address] : undefined,
+    query: { enabled: Boolean(useSmart && smart.address && asset) },
   });
 
   async function handleCheckRule() {
@@ -66,7 +80,7 @@ export default function Review() {
       const res = await fetch("/api/policy-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: pending.intent, owner: address }),
+        body: JSON.stringify({ intent: pending.intent, owner: ownerAddr }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -101,34 +115,81 @@ export default function Review() {
     }
   }
 
+  /** Sends USDC from the connected wallet to the smart account. This one is a normal transaction (needs a little ETH). */
+  async function handleFund() {
+    setError(null);
+    if (!smart.address || !asset) return;
+    let amount: bigint;
+    try {
+      amount = parseUnits(fundAmount.trim(), 6);
+      if (amount <= 0n) throw new Error();
+    } catch {
+      setError("Enter how much USDC to send to the smart account, for example 25.");
+      return;
+    }
+    setFunding(true);
+    try {
+      const hash = await writeContractAsync({ address: asset, abi: erc20Abi, functionName: "transfer", args: [smart.address, amount] });
+      await publicClient!.waitForTransactionReceipt({ hash });
+      await refetchSmartBalance();
+      setFundAmount("");
+    } catch (e) {
+      setError((e as Error).message.split("\n")[0]);
+    } finally {
+      setFunding(false);
+    }
+  }
+
   async function handleApprove() {
     setError(null);
     setPhase("creating-permission");
     try {
-      const hash = await writeContractAsync({
-        address: PULSE_CONTRACT_ADDRESS,
-        abi: PULSE_ABI,
-        functionName: "createPermission",
-        args: [
-          checkResult.policy.asset,
-          checkResult.policy.recipient,
-          BigInt(checkResult.policy.maxPerExecution),
-          BigInt(checkResult.policy.maxPerWindow),
-          BigInt(checkResult.policy.windowSeconds),
-          BigInt(checkResult.policy.expiresAt),
-          // The contract enforces these two itself, so a compromised worker cannot fire on the
-          // wrong day or when the condition is unmet. Both come from the server's policy engine.
-          checkResult.policy.weekday as number, // 0 = Sunday .. 6 = Saturday, UTC
-          checkResult.policy.conditionOp as number, // Op enum: 0 GT, 1 GTE, 2 LT, 3 LTE, 4 EQ
-          BigInt(checkResult.policy.conditionThreshold),
-        ],
-      });
-      const receipt = await publicClient!.waitForTransactionReceipt({ hash });
+      const createArgs = [
+        checkResult.policy.asset,
+        checkResult.policy.recipient,
+        BigInt(checkResult.policy.maxPerExecution),
+        BigInt(checkResult.policy.maxPerWindow),
+        BigInt(checkResult.policy.windowSeconds),
+        BigInt(checkResult.policy.expiresAt),
+        // The contract enforces these two itself, so a compromised worker cannot fire on the
+        // wrong day or when the condition is unmet. Both come from the server's policy engine.
+        checkResult.policy.weekday as number, // 0 = Sunday .. 6 = Saturday, UTC
+        checkResult.policy.conditionOp as number, // Op enum: 0 GT, 1 GTE, 2 LT, 3 LTE, 4 EQ
+        BigInt(checkResult.policy.conditionThreshold),
+      ] as const;
+
+      let receipt;
+      if (useSmart) {
+        if (!smart.address) throw new Error("The smart account is not ready yet.");
+        // One sponsored UserOperation: the USDC approval (only if still needed) and the permission,
+        // both made BY the smart account, so it is the permission's owner.
+        const calls = [];
+        if (needsAllowance) {
+          calls.push({
+            to: asset!,
+            data: encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [PULSE_CONTRACT_ADDRESS, maxPerWindowBig] }),
+          });
+        }
+        calls.push({
+          to: PULSE_CONTRACT_ADDRESS,
+          data: encodeFunctionData({ abi: PULSE_ABI, functionName: "createPermission", args: createArgs }),
+        });
+        ({ receipt } = await smart.send(calls));
+      } else {
+        const hash = await writeContractAsync({
+          address: PULSE_CONTRACT_ADDRESS,
+          abi: PULSE_ABI,
+          functionName: "createPermission",
+          args: createArgs,
+        });
+        receipt = await publicClient!.waitForTransactionReceipt({ hash });
+      }
 
       // Read the real permission id back from the emitted event. Never
       // invent or guess it client-side.
       let onchainId: bigint | null = null;
       for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== PULSE_CONTRACT_ADDRESS.toLowerCase()) continue;
         try {
           const decoded = decodeEventLog({ abi: PULSE_ABI, data: log.data, topics: log.topics });
           if (decoded.eventName === "PermissionCreated") {
@@ -147,15 +208,14 @@ export default function Review() {
       // Prove control of `address` for this exact permission id. Expires in 5
       // minutes; the server rejects anything older or reused.
       const timestamp = Date.now();
-      const registerSignature = await signMessageAsync({
-        message: buildRegisterMessage(onchainId.toString(), address!, timestamp),
-      });
+      const registerMessage = buildRegisterMessage(onchainId.toString(), ownerAddr!, timestamp);
+      const registerSignature = await active.sign(registerMessage);
       const res = await fetch("/api/automations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           onchainId: onchainId.toString(),
-          owner: address,
+          owner: ownerAddr,
           // The server re-derives schedule, condition, amount and expiry from the intent
           // and checks them against the on-chain permission, so none are sent separately.
           intent: pending.intent,
@@ -179,7 +239,9 @@ export default function Review() {
   const { intent, explanation } = pending;
   const needsAllowance = Boolean(checkResult) && (allowance ?? 0n) < maxPerWindowBig;
   const recipientAddr = checkResult?.policy?.recipient as string | undefined;
-  const step = !checkResult ? 1 : needsAllowance ? 2 : 3;
+  const separateApproval = needsAllowance && !useSmart; // a smart account folds the approval into the one activation
+  const step = !checkResult ? 1 : separateApproval ? 2 : 3;
+  const smartBalanceText = smartBalance !== undefined ? formatUnits(smartBalance as bigint, 6) : "…";
   const working = phase === "approving-usdc" || phase === "creating-permission" || phase === "recording";
   const STEPS = ["Check the rule", "Approve USDC", "Activate"];
 
@@ -241,6 +303,20 @@ export default function Review() {
           </section>
 
           {!isConnected && <Alert tone="warning">Connect a wallet (top right) before you approve.</Alert>}
+
+          {useSmart && isConnected && (
+            <section className="card" aria-label="Account">
+              {smart.loading && <p className="text-sm text-slate-600">Preparing your smart account…</p>}
+              {smart.error && <Alert tone="danger" title="Could not prepare the smart account">{smart.error}</Alert>}
+              {smart.address && (
+                <p className="text-sm text-slate-700">
+                  Running from your smart account <ExplorerLink kind="address" value={smart.address} />, with gas paid for you. USDC in it:{" "}
+                  <span className="font-semibold">{smartBalanceText}</span>.{" "}
+                  <Link href="/settings" className="font-semibold text-link underline">Change account</Link>
+                </p>
+              )}
+            </section>
+          )}
           {error && (
             <Alert tone="danger" title="That did not work">
               {error}
@@ -259,7 +335,7 @@ export default function Review() {
               <p className="mt-1 text-sm text-slate-600">
                 Checks that the rule is well-formed and compares it with your wallet as it is right now. It does not predict your future balance.
               </p>
-              <button className="btn-primary mt-4" onClick={handleCheckRule} disabled={checking}>
+              <button className="btn-primary mt-4" onClick={handleCheckRule} disabled={checking || (useSmart && !smart.address)}>
                 {checking && <Spinner />}{checking ? "Checking…" : "Check rule"}
               </button>
             </section>
@@ -294,14 +370,38 @@ export default function Review() {
               </section>
 
               <section className="card" aria-labelledby="activate">
-                <h2 id="activate" className="text-base font-semibold text-navy">{needsAllowance ? "Approve USDC spending" : "Activate"}</h2>
+                <h2 id="activate" className="text-base font-semibold text-navy">{separateApproval ? "Approve USDC spending" : "Activate"}</h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  {needsAllowance
+                  {useSmart
+                    ? `One gasless transaction${needsAllowance ? " approves up to " + formatUnits(maxPerWindowBig, 6) + " USDC (your weekly cap) and" : ""} creates the permission from your smart account, then you sign once to record it in the app.`
+                    : separateApproval
                     ? `Step 1 of 2. This lets the Volo contract move up to ${formatUnits(maxPerWindowBig, 6)} USDC from your wallet, your weekly cap, and nothing more. It is a token approval on-chain.`
                     : "Step 2 of 2. This creates the permission on-chain with the limits above, then records it in the app. Your wallet will ask you to confirm twice: a transaction, then a signature."}
                 </p>
                 {allowance !== undefined && (
                   <p className="mt-1 text-xs text-muted">Currently approved for this contract: {formatUnits(allowance as bigint, 6)} USDC.</p>
+                )}
+                {useSmart && smart.address && (
+                  <div className="mt-3 rounded-xl border border-line p-3 text-sm">
+                    <p className="font-semibold text-navy">Fund the smart account</p>
+                    <p className="mt-1 text-slate-600">
+                      The automation spends USDC held by the smart account, not by your wallet. It has {smartBalanceText} USDC now.
+                      Sending from your wallet is a normal transaction, so it needs a little ETH for gas.
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <input
+                        inputMode="decimal"
+                        placeholder="USDC amount"
+                        value={fundAmount}
+                        onChange={(e) => setFundAmount(e.target.value)}
+                        className="w-36 rounded-lg border border-line px-3 py-1.5 text-sm"
+                        aria-label="USDC amount to send to the smart account"
+                      />
+                      <button className="btn-secondary !py-1.5" onClick={handleFund} disabled={funding || working}>
+                        {funding && <Spinner />}{funding ? "Sending…" : "Send USDC to smart account"}
+                      </button>
+                    </div>
+                  </div>
                 )}
                 <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-surface p-3 text-sm text-navy">
                   <input
@@ -312,7 +412,7 @@ export default function Review() {
                   />
                   <span>I have reviewed the rules and the permissions on this page, and I understand the limits listed on the right.</span>
                 </label>
-                {needsAllowance ? (
+                {separateApproval ? (
                   <button className="btn-primary mt-4" onClick={handleApproveUsdc} disabled={!isConnected || !confirmed || working}>
                     {phase === "approving-usdc" && <Spinner />}
                     {phase === "approving-usdc" ? "Waiting for your wallet…" : "1. Approve USDC spending"}
@@ -321,10 +421,10 @@ export default function Review() {
                   <button
                     className="btn-primary mt-4"
                     onClick={handleApprove}
-                    disabled={!isConnected || !confirmed || !checkResult.ruleCheck.wellFormed || working}
+                    disabled={!isConnected || !confirmed || !checkResult.ruleCheck.wellFormed || working || (useSmart && !smart.address)}
                   >
                     {working && <Spinner />}
-                    {phase === "creating-permission" ? "Waiting for your wallet…" : phase === "recording" ? "Recording…" : "2. Activate automation"}
+                    {phase === "creating-permission" ? (useSmart ? "Sending (gasless)…" : "Waiting for your wallet…") : phase === "recording" ? "Recording…" : useSmart ? "Activate automation (gasless)" : "2. Activate automation"}
                   </button>
                 )}
               </section>
@@ -336,7 +436,7 @@ export default function Review() {
           <section className="card" aria-labelledby="perms">
             <h2 id="perms" className="text-base font-semibold text-navy">Permissions you are granting</h2>
             <dl className="mt-2">
-              <DetailRow label="Wallet it can use">{address ? <span className="font-mono text-[13px]">{shortAddr(address)}</span> : "Connect a wallet"}</DetailRow>
+              <DetailRow label="Wallet it can use">{ownerAddr ? <span className="font-mono text-[13px]">{shortAddr(ownerAddr)}{useSmart ? " (smart account)" : ""}</span> : useSmart && smart.loading ? "Preparing smart account…" : "Connect a wallet"}</DetailRow>
               <DetailRow label="What it can do">Send {intent.action.asset} only. No other transaction type.</DetailRow>
               <DetailRow label="Only sends to">{recipientAddr ? <ExplorerLink kind="address" value={recipientAddr} /> : `${intent.recipientId} (shown after the check)`}</DetailRow>
               <DetailRow label="Spending limits">${intent.maxPerExecution} per run, ${intent.maxPerWindow} per week</DetailRow>

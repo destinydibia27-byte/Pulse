@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useAccount } from "wagmi";
+import { useActiveAccount } from "./useActiveAccount";
 
 /**
  * The connected wallet's own automations. The user IS the wallet: nothing is listed until a wallet
@@ -10,8 +10,8 @@ import { useAccount } from "wagmi";
  * pages can show a loading state instead of flashing "connect your wallet".
  */
 export function useOwnerAutomations() {
-  const { address, status } = useAccount();
-  const walletPending = status === "connecting" || status === "reconnecting";
+  const { address, walletPending: reconnecting, preparing } = useActiveAccount();
+  const walletPending = reconnecting || preparing;
   const [automations, setAutomations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);

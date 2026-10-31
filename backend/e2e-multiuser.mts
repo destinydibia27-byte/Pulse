@@ -46,7 +46,7 @@ check("rapid writes are rate limited (429)", limited > 0, `limited=${limited}`);
   process.exit(fail ? 1 : 0);
 }
 
-const text = "Every Friday, if my USDC balance is above $100, send $10 to my savings wallet";
+const text = "Every Friday, send $10 to my savings wallet when my balance is above $100.";
 const parsed = await post("/api/parse", { text });
 check("parse returns an intent", parsed.body?.ok === true, JSON.stringify(parsed.body));
 const intent = parsed.body.intent;

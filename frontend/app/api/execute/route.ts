@@ -7,6 +7,7 @@ import {
 } from "../../../lib/db";
 import { isValidTimeZone, localParts, markDone } from "../../../lib/scheduler";
 import { buildActionMessage, verifyAuth } from "../../../lib/auth";
+import { verifySmartAccount } from "../../../lib/smartVerify";
 import { consumeOnce, sweepExpired } from "../../../lib/nonceGuard";
 import { rateLimited } from "../../../lib/guard";
 
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
     signature,
     expectedSigner: automation.owner,
     timestamp,
+    verifySmartAccount,
   });
   if (!auth.ok) return NextResponse.json({ ok: false, reason: auth.reason }, { status: 401 });
   sweepExpired();
