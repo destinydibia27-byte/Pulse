@@ -7,6 +7,7 @@ import { consumeOnce, sweepExpired } from "../../../lib/nonceGuard";
 import { checkRecipientAddress, MAX_RECIPIENTS_PER_USER, normalizeLabel } from "../../../lib/recipients";
 import { USDC_ADDRESS } from "../../../lib/appConfig";
 import { rateLimited, userKey } from "../../../lib/guard";
+import { verifySmartAccount } from "../../../lib/smartVerify";
 
 /**
  * A wallet's saved recipients ("savings" -> 0x...). Reading needs no sign-in: the same addresses
@@ -30,7 +31,8 @@ const Body = z.object({
   owner: z.string().refine((v) => isAddress(v), "owner must be a valid address"),
   label: z.string(),
   address: z.string().optional(),
-  signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/, "signature must be a valid 65-byte hex signature"),
+  // 65 bytes for a normal wallet; longer for a smart account (checked by verifyAuth).
+  signature: z.string().regex(/^0x(?:[0-9a-fA-F]{2}){65,4096}$/, "signature must be a valid hex signature"),
   timestamp: z.number(),
 });
 
@@ -67,7 +69,7 @@ export async function POST(req: NextRequest) {
     op === "set"
       ? buildRecipientSetMessage(owner, label, address!, timestamp)
       : buildRecipientRemoveMessage(owner, label, timestamp);
-  const auth = await verifyAuth({ message, signature: signature as `0x${string}`, expectedSigner: owner, timestamp });
+  const auth = await verifyAuth({ message, signature: signature as `0x${string}`, expectedSigner: owner, timestamp, verifySmartAccount });
   if (!auth.ok) return NextResponse.json({ ok: false, reason: auth.reason }, { status: 401 });
   sweepExpired();
   if (!consumeOnce(signature, timestamp + 5 * 60 * 1000)) {

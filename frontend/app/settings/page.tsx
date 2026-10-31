@@ -1,16 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useAccount, useSignMessage } from "wagmi";
 import { buildRecipientRemoveMessage, buildRecipientSetMessage } from "../../lib/auth";
 import { checkRecipientAddress, normalizeLabel, MAX_RECIPIENTS_PER_USER } from "../../lib/recipients";
 import { Alert, EmptyState, ExplorerLink, Spinner } from "../components/ui";
+import { useActiveAccount } from "../components/useActiveAccount";
 
 type Book = Record<string, string>;
 
 export default function Settings() {
-  const { address, status } = useAccount();
-  const { signMessageAsync } = useSignMessage();
+  const account = useActiveAccount();
+  const { address, sign, walletPending: reconnecting, preparing } = account;
   const [book, setBook] = useState<Book | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [label, setLabel] = useState("savings");
@@ -53,7 +53,7 @@ export default function Settings() {
     setBusy("save"); setError(null); setNotice(null);
     try {
       const timestamp = Date.now();
-      const signature = await signMessageAsync({ message: buildRecipientSetMessage(address, cleanLabel, checked.address, timestamp) });
+      const signature = await sign(buildRecipientSetMessage(address, cleanLabel, checked.address, timestamp));
       await post({ op: "set", owner: address, label: cleanLabel, address: checked.address, signature, timestamp });
       setNotice(`Saved. “${cleanLabel}” now sends to ${checked.address}.`);
       setAddr(""); setConfirmed(false);
@@ -69,7 +69,7 @@ export default function Settings() {
     setBusy(`remove:${l}`); setError(null); setNotice(null);
     try {
       const timestamp = Date.now();
-      const signature = await signMessageAsync({ message: buildRecipientRemoveMessage(address, l, timestamp) });
+      const signature = await sign(buildRecipientRemoveMessage(address, l, timestamp));
       await post({ op: "remove", owner: address, label: l, signature, timestamp });
       setNotice(`Removed “${l}”. Automations already created keep the address they were created with.`);
       setRemoving(null);
@@ -80,17 +80,50 @@ export default function Settings() {
     }
   }
 
-  const walletPending = status === "connecting" || status === "reconnecting";
+  const accountCard = account.smartEnabled && account.connected && (
+        <section className="card mt-6" aria-labelledby="acct">
+          <h2 id="acct" className="text-base font-semibold text-navy">Account</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Volo can run your automations from a <strong className="text-navy">smart account</strong> your wallet controls, with gas paid for you, or
+            straight from your wallet. Your recipients and automations belong to the account you choose, so switching shows a different set.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-labelledby="acct">
+            {([
+              ["smart", "Smart account (gasless)", "No gas to pay. The USDC to be sent is held in the smart account, which is a separate address from your wallet."],
+              ["wallet", "My wallet", "The permission belongs to your wallet and you pay gas for each transaction."],
+            ] as const).map(([value, title, blurb]) => (
+              <label key={value} className={`flex cursor-pointer flex-col gap-1 rounded-xl border p-3 text-sm ${account.mode === value ? "border-brand bg-surface" : "border-line"}`}>
+                <span className="flex items-center gap-2 font-semibold text-navy">
+                  <input type="radio" name="account" checked={account.mode === value} onChange={() => account.setMode(value)} className="accent-brand focus-visible:ring-2 focus-visible:ring-electric" />
+                  {title}
+                </span>
+                <span className="text-slate-600">{blurb}</span>
+              </label>
+            ))}
+          </div>
+          {account.isSmart && account.smart.loading && <p className="mt-3 text-sm text-slate-600">Preparing your smart account…</p>}
+          {account.isSmart && account.smart.error && <Alert tone="danger" title="Could not prepare the smart account" className="mt-3">{account.smart.error}</Alert>}
+          {account.isSmart && account.smart.address && (
+            <p className="mt-3 text-sm text-slate-700">Smart account: <ExplorerLink kind="address" value={account.smart.address} /></p>
+          )}
+        </section>
+  );
+
+  const walletPending = reconnecting || preparing;
   if (!address) {
     return (
       <main>
         <p className="eyebrow">Settings</p>
         <h1 className="mt-1 text-3xl font-bold tracking-tight text-navy">Your recipients</h1>
+        {/* Connected but the smart account is not ready: keep the way out (switch to the wallet) in reach. */}
+        {!walletPending && accountCard}
         <div className="mt-8">
           {walletPending ? (
             <div className="card h-32 animate-pulse" aria-label="Loading" />
+          ) : account.connected ? (
+            <p className="text-sm text-slate-600">Your recipients appear here once your account is ready.</p>
           ) : (
-            <EmptyState title="Connect your wallet">Recipients belong to your wallet, so connect it (top right) to see and edit them.</EmptyState>
+            <EmptyState title="Connect your wallet">Recipients belong to your account, so connect your wallet (top right) to see and edit them.</EmptyState>
           )}
         </div>
       </main>
@@ -105,6 +138,8 @@ export default function Settings() {
         When you write &ldquo;send $10 to my savings wallet&rdquo;, Volo looks up &ldquo;savings&rdquo; here. Only addresses you save
         here can ever receive money from your automations, and the contract locks the address in when a permission is created.
       </p>
+
+      {accountCard}
 
       {error && <Alert tone="danger" title="That did not work" className="mt-6">{error}</Alert>}
       {notice && <Alert tone="success" className="mt-6">{notice}</Alert>}

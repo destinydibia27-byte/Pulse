@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { useAccount, usePublicClient, useSignMessage, useWriteContract } from "wagmi";
+import { encodeFunctionData } from "viem";
 import { PULSE_ABI } from "../../lib/abi";
 import { PULSE_CONTRACT_ADDRESS } from "../../lib/wagmiConfig";
 import { buildActionMessage } from "../../lib/auth";
 import { shortAddr } from "../../lib/explorer";
+import { useSmartAccount } from "./useSmartAccount";
 
 export type Action = "pause" | "resume" | "cancel" | "fire";
 
@@ -20,13 +22,19 @@ export function useAutomationActions(onChanged?: () => void) {
   const { writeContractAsync } = useWriteContract();
   const { signMessageAsync } = useSignMessage();
   const publicClient = usePublicClient();
+  const smart = useSmartAccount();
   const [busy, setBusy] = useState<{ id: string; action: Action | "sync" } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  async function postRecord(automationId: string, action: Action) {
+  const isSmartOwned = (a: any) =>
+    Boolean(smart.address && a.owner && smart.address.toLowerCase() === String(a.owner).toLowerCase());
+
+  async function postRecord(a: any, action: Action) {
+    const automationId = a.id as string;
     const timestamp = Date.now();
-    const signature = await signMessageAsync({ message: buildActionMessage(automationId, action, timestamp) });
+    const message = buildActionMessage(automationId, action, timestamp);
+    const signature = isSmartOwned(a) ? await smart.sign(message) : await signMessageAsync({ message });
     const res = await fetch("/api/execute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -37,10 +45,14 @@ export function useAutomationActions(onChanged?: () => void) {
 
   function checkWallet(a: any): string | null {
     if (!address) return "Connect your wallet first.";
-    if (a.owner && address.toLowerCase() !== String(a.owner).toLowerCase()) {
-      return `This automation belongs to ${shortAddr(a.owner)}. Switch your wallet to that account.`;
-    }
-    return null;
+    if (!a.owner) return null;
+    const owner = String(a.owner).toLowerCase();
+    if (address.toLowerCase() === owner) return null;
+    if (isSmartOwned(a)) return null;
+    if (smart.enabled && smart.loading) return "Preparing your smart account. Try again in a moment.";
+    return `This automation belongs to ${shortAddr(a.owner)}. Switch your wallet to ${
+      smart.enabled ? "that account, or to the wallet that controls it" : "that account"
+    }.`;
   }
 
   async function act(a: any, action: Action): Promise<boolean> {
@@ -53,16 +65,25 @@ export function useAutomationActions(onChanged?: () => void) {
     let onchainDone = false;
     try {
       if (action === "pause" || action === "resume" || action === "cancel") {
-        const hash = await writeContractAsync({
-          address: PULSE_CONTRACT_ADDRESS,
-          abi: PULSE_ABI,
-          functionName: action,
-          args: [BigInt(a.onchainId)],
-        });
-        await publicClient!.waitForTransactionReceipt({ hash });
+        if (isSmartOwned(a)) {
+          await smart.send([
+            {
+              to: PULSE_CONTRACT_ADDRESS,
+              data: encodeFunctionData({ abi: PULSE_ABI, functionName: action, args: [BigInt(a.onchainId)] }),
+            },
+          ]);
+        } else {
+          const hash = await writeContractAsync({
+            address: PULSE_CONTRACT_ADDRESS,
+            abi: PULSE_ABI,
+            functionName: action,
+            args: [BigInt(a.onchainId)],
+          });
+          await publicClient!.waitForTransactionReceipt({ hash });
+        }
         onchainDone = true;
       }
-      const data = await postRecord(a.id, action);
+      const data = await postRecord(a, action);
       if (action === "fire") {
         if (!data.ok) setError(data.reason ?? "Could not run it.");
         else if (data.mock) setNotice(data.message);
@@ -95,7 +116,7 @@ export function useAutomationActions(onChanged?: () => void) {
     if (problem) { setError(problem); return false; }
     setBusy({ id: a.id, action: "sync" });
     try {
-      const data = await postRecord(a.id, action);
+      const data = await postRecord(a, action);
       if (!data.ok) throw new Error(data.reason ?? "The app could not record this change.");
       setNotice("The app's record now matches the contract.");
       onChanged?.();

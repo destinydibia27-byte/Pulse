@@ -4,12 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAccount, usePublicClient, useReadContract, useWriteContract } from "wagmi";
-import { erc20Abi, formatUnits } from "viem";
+import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import { PULSE_CONTRACT_ADDRESS } from "../../../lib/wagmiConfig";
 import { OPERATORS, WEEKDAYS, contractEventsUrl, formatDateTime, shortAddr, utcDayToDate } from "../../../lib/explorer";
 import { Alert, ConfirmDialog, DetailRow, EmptyState, ExplorerLink, Spinner, StatusBadge } from "../../components/ui";
 import { useAutomationActions } from "../../components/useAutomationActions";
 import { useOnchainPermission } from "../../components/useOnchain";
+import { useSmartAccount } from "../../components/useSmartAccount";
 
 const USDC = (v: string | bigint) => formatUnits(BigInt(v), 6);
 
@@ -18,6 +19,7 @@ export default function AutomationDetail() {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  const smart = useSmartAccount();
   const router = useRouter();
 
   const [automation, setAutomation] = useState<any>(null);
@@ -80,7 +82,23 @@ export default function AutomationDetail() {
   const amount = automation.amountBaseUnits ? BigInt(automation.amountBaseUnits) : null;
   const allowanceLow = status === "active" && allowance !== undefined && amount !== null && allowance < amount;
   const needsRenewal = (status === "active" || status === "paused") && allowance !== undefined && permission !== undefined && allowance < permission.maxPerWindow;
-  const isOwner = address && automation.owner && address.toLowerCase() === String(automation.owner).toLowerCase();
+  const ownerLc = automation.owner ? String(automation.owner).toLowerCase() : "";
+  const ownedBySmart = Boolean(ownerLc && smart.address && smart.address.toLowerCase() === ownerLc);
+  const isOwner = Boolean(ownerLc && ((address && address.toLowerCase() === ownerLc) || ownedBySmart));
+
+  /** An ERC-20 approve from whichever account owns this automation: the smart account (sponsored) or the wallet. */
+  async function sendApprove(amount: bigint) {
+    if (ownedBySmart) {
+      await smart.send([
+        { to: automation.asset, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [PULSE_CONTRACT_ADDRESS, amount] }) },
+      ]);
+      return;
+    }
+    const hash = await writeContractAsync({
+      address: automation.asset, abi: erc20Abi, functionName: "approve", args: [PULSE_CONTRACT_ADDRESS, amount],
+    });
+    await publicClient!.waitForTransactionReceipt({ hash });
+  }
   const spentPct = permission && permission.maxPerWindow > 0n ? Number((permission.spentInWindow * 100n) / permission.maxPerWindow) : 0;
 
   async function revokeApproval() {
@@ -88,10 +106,7 @@ export default function AutomationDetail() {
     if (!isOwner) { setRevokeError(`Connect the owner wallet (${shortAddr(automation.owner)}) to revoke its approval.`); setConfirmRevoke(false); return; }
     setRevoking(true);
     try {
-      const hash = await writeContractAsync({
-        address: automation.asset, abi: erc20Abi, functionName: "approve", args: [PULSE_CONTRACT_ADDRESS, 0n],
-      });
-      await publicClient!.waitForTransactionReceipt({ hash });
+      await sendApprove(0n);
       await refetchAllowance();
     } catch (e) {
       setRevokeError((e as Error).message.split("\n")[0]);
@@ -108,10 +123,7 @@ export default function AutomationDetail() {
     if (!permission) return;
     setRenewing(true);
     try {
-      const hash = await writeContractAsync({
-        address: automation.asset, abi: erc20Abi, functionName: "approve", args: [PULSE_CONTRACT_ADDRESS, permission.maxPerWindow],
-      });
-      await publicClient!.waitForTransactionReceipt({ hash });
+      await sendApprove(permission.maxPerWindow);
       await refetchAllowance();
     } catch (e) {
       setRevokeError((e as Error).message.split("\n")[0]);
@@ -193,7 +205,10 @@ export default function AutomationDetail() {
             </div>
             {permission ? (
               <dl className="mt-2">
-                <DetailRow label="Wallet it can use">{<ExplorerLink kind="address" value={permission.owner} />}</DetailRow>
+                <DetailRow label="Wallet it can use">
+                  <ExplorerLink kind="address" value={permission.owner} />
+                  {ownedBySmart && <span className="ml-2 text-xs text-muted">smart account (gas is sponsored)</span>}
+                </DetailRow>
                 <DetailRow label="Only sends to"><ExplorerLink kind="address" value={permission.recipient} /></DetailRow>
                 <DetailRow label="Max per run">{USDC(permission.maxPerExecution)} USDC</DetailRow>
                 <DetailRow label="Max per week">{USDC(permission.maxPerWindow)} USDC</DetailRow>

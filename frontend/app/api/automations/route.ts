@@ -12,6 +12,7 @@ import { verifyPermissionOnChain } from "../../../lib/chain";
 import { approvedRecipientsFor, USDC_ADDRESS, chainConfigured } from "../../../lib/appConfig";
 import { maxAutomationsPerOwner, rateLimited, userKey } from "../../../lib/guard";
 import { buildRegisterMessage, verifyAuth } from "../../../lib/auth";
+import { verifySmartAccount } from "../../../lib/smartVerify";
 import { consumeOnce, sweepExpired } from "../../../lib/nonceGuard";
 
 /** Lists one wallet's automations. Anything here is also public on-chain, so no sign-in is needed to read. */
@@ -37,7 +38,8 @@ const Body = z.object({
   onchainId: z.string().regex(/^\d+$/, "onchainId must be a non-negative integer string"),
   owner: z.string().refine((v) => isAddress(v), "owner must be a valid address"),
   intent: IntentSchema,
-  signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/, "signature must be a valid 65-byte hex signature"),
+  // 65 bytes for a normal wallet; longer for a smart account (checked by verifyAuth).
+  signature: z.string().regex(/^0x(?:[0-9a-fA-F]{2}){65,4096}$/, "signature must be a valid hex signature"),
   timestamp: z.number(),
 });
 
@@ -76,6 +78,7 @@ export async function POST(req: NextRequest) {
     signature: signature as `0x${string}`,
     expectedSigner: owner,
     timestamp,
+    verifySmartAccount,
   });
   if (!auth.ok) return NextResponse.json({ ok: false, reason: auth.reason }, { status: 401 });
   sweepExpired();

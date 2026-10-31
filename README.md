@@ -95,4 +95,4 @@ cd frontend && npm run build         # types, lint, pages
 
 ## Roadmap
 
-Gasless smart accounts with ZeroDev (built on a branch, not yet tested against the real service) · rules triggered by market prices using Chainlink data feeds (the contract supports it, the app does not yet) · an event index with The Graph · wallet login with Privy · a keeper network in place of the single worker · an audit, then mainnet.
+Proving gasless smart accounts with ZeroDev against the real service (the code is in and switches on with `NEXT_PUBLIC_ZERODEV_PROJECT_ID`, but has not been run against a live project yet) · rules triggered by market prices using Chainlink data feeds (the contract supports it, the app does not yet) · an event index with The Graph · wallet login with Privy · a keeper network in place of the single worker · an audit, then mainnet.

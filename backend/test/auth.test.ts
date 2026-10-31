@@ -96,6 +96,89 @@ test("tampering with any byte of the signature is rejected, not silently accepte
   assert.equal(r.ok, false);
 });
 
+// ------------------------------------------------- smart-account (ERC-1271) owners
+const SMART = "0x1111111111111111111111111111111111111111" as const;
+const LONG_SIG = ("0x" + "ab".repeat(97)) as `0x${string}`; // 97 bytes: not a plain wallet signature
+
+test("smart account: a long signature is accepted only when the account itself says it is valid", async () => {
+  const msg = buildRegisterMessage("5", SMART, NOW);
+  let seen: any = null;
+  const r = await verifyAuth({
+    message: msg, signature: LONG_SIG, expectedSigner: SMART, timestamp: NOW,
+    verifySmartAccount: async (a) => { seen = a; return true; },
+  }, NOW);
+  assert.deepEqual(r, { ok: true, signer: SMART });
+  assert.equal(seen.address, SMART);
+  assert.equal(seen.message, msg, "the verifier must be asked about the exact message");
+  assert.equal(seen.signature, LONG_SIG);
+});
+
+test("smart account: the account saying no is a rejection", async () => {
+  const r = await verifyAuth({
+    message: buildRegisterMessage("5", SMART, NOW), signature: LONG_SIG, expectedSigner: SMART, timestamp: NOW,
+    verifySmartAccount: async () => false,
+  }, NOW);
+  assert.equal(r.ok, false);
+});
+
+test("smart account: a verifier that throws (RPC down) fails closed", async () => {
+  const r = await verifyAuth({
+    message: buildRegisterMessage("5", SMART, NOW), signature: LONG_SIG, expectedSigner: SMART, timestamp: NOW,
+    verifySmartAccount: async () => { throw new Error("rpc down"); },
+  }, NOW);
+  assert.equal(r.ok, false);
+});
+
+test("smart account: without a verifier a long signature is never accepted", async () => {
+  const r = await verifyAuth({
+    message: buildRegisterMessage("5", SMART, NOW), signature: LONG_SIG, expectedSigner: SMART, timestamp: NOW,
+  }, NOW);
+  assert.equal(r.ok, false);
+});
+
+test("smart account: the timestamp window still applies before the verifier is asked", async () => {
+  let asked = false;
+  const r = await verifyAuth({
+    message: buildRegisterMessage("5", SMART, NOW), signature: LONG_SIG, expectedSigner: SMART, timestamp: NOW,
+    verifySmartAccount: async () => { asked = true; return true; },
+  }, NOW + AUTH_WINDOW_MS + 1);
+  assert.equal(r.ok, false);
+  assert.equal(asked, false);
+});
+
+test("a plain owner signature never reaches the smart-account verifier", async () => {
+  const msg = buildActionMessage("demo-0", "pause", NOW);
+  const sig = await owner.signMessage({ message: msg });
+  let asked = false;
+  const r = await verifyAuth({
+    message: msg, signature: sig, expectedSigner: owner.address, timestamp: NOW,
+    verifySmartAccount: async () => { asked = true; return true; },
+  }, NOW);
+  assert.equal(r.ok, true);
+  assert.equal(asked, false);
+});
+
+test("a plain signature by someone else is still rejected when the account says no", async () => {
+  const msg = buildActionMessage("demo-0", "pause", NOW);
+  const sig = await attacker.signMessage({ message: msg });
+  const r = await verifyAuth({
+    message: msg, signature: sig, expectedSigner: owner.address, timestamp: NOW,
+    verifySmartAccount: async () => false,
+  }, NOW);
+  assert.equal(r.ok, false);
+  assert.match((r as any).reason, /not made by the expected wallet/);
+});
+
+test("a smart account's 65-byte signature (recovers to its key, not the account) is judged by the account", async () => {
+  const msg = buildActionMessage("demo-0", "cancel", NOW);
+  const sig = await attacker.signMessage({ message: msg }); // recovers to a key that is not SMART
+  const r = await verifyAuth({
+    message: msg, signature: sig, expectedSigner: SMART, timestamp: NOW,
+    verifySmartAccount: async () => true,
+  }, NOW);
+  assert.deepEqual(r, { ok: true, signer: SMART });
+});
+
 // ---------------------------------------------------------------- nonceGuard
 test("nonceGuard: first use succeeds, replay is rejected", () => {
   _resetForTests();
